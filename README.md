@@ -1,4 +1,4 @@
-# auto-forex-snowball
+# snowball
 
 Snowball trading strategy package for AutoForexV2.
 
