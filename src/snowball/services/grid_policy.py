@@ -119,14 +119,14 @@ class SnowballGridPolicy:
                 continue
             if (
                 cycle.direction == PositionSide.LONG
-                and pending.exit_plan.take_profit_price < take_profit_price
+                and pending.entry.take_profit_price < take_profit_price
             ):
-                pending.exit_plan.take_profit_price = take_profit_price
+                pending.entry.take_profit_price = take_profit_price
             elif (
                 cycle.direction == PositionSide.SHORT
-                and pending.exit_plan.take_profit_price > take_profit_price
+                and pending.entry.take_profit_price > take_profit_price
             ):
-                pending.exit_plan.take_profit_price = take_profit_price
+                pending.entry.take_profit_price = take_profit_price
 
     def _present_slots(self, cycle: Cycle) -> list[PresentSlot]:
         present: list[PresentSlot] = []

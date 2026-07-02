@@ -14,7 +14,7 @@ from snowball.enums import (
     RebuildStopLossMode,
     RebuildTakeProfitMode,
 )
-from snowball.models.entries import Entry, SlotExitPlan, StopLossSnapshot
+from snowball.models.entries import Entry, PendingRebuild
 from snowball.models.grid import Layer
 from snowball.services.calculators import SnowballCalculator
 
@@ -83,30 +83,28 @@ class SnowballPricing:
         *,
         direction: PositionSide,
         entry: Entry,
-        exit_plan: SlotExitPlan,
         tick: Tick,
     ) -> bool:
         """Return True when the take-profit is reachable on this tick."""
         if not self.can_close_on_tick(entry=entry, tick=tick):
             return False
         if direction == PositionSide.LONG:
-            return tick.bid >= exit_plan.take_profit_price
-        return tick.ask <= exit_plan.take_profit_price
+            return tick.bid >= entry.take_profit_price
+        return tick.ask <= entry.take_profit_price
 
     def stop_loss_hit(
         self,
         *,
         direction: PositionSide,
         entry: Entry,
-        exit_plan: SlotExitPlan,
         tick: Tick,
     ) -> bool:
         """Return True when the stop-loss is reachable on this tick."""
-        if exit_plan.stop_loss_price is None or not self.can_close_on_tick(entry=entry, tick=tick):
+        if entry.stop_loss_price is None or not self.can_close_on_tick(entry=entry, tick=tick):
             return False
         if direction == PositionSide.LONG:
-            return tick.bid <= exit_plan.stop_loss_price
-        return tick.ask >= exit_plan.stop_loss_price
+            return tick.bid <= entry.stop_loss_price
+        return tick.ask >= entry.stop_loss_price
 
     def unrealized_pl(self, *, direction: PositionSide, entry: Entry, tick: Tick) -> Money:
         """Return unrealized P/L in quote currency for the current tick."""
@@ -216,11 +214,9 @@ class SnowballPricing:
         take_profit_price = Money.of(total_cost / total_units, currency)
         for slot in layer.slots:
             if slot.entry is not None and layer.retracement_count(slot) > 0:
-                if slot.exit_plan is None:
-                    raise ValueError("counter slot has no exit plan")
-                slot.exit_plan.take_profit_price = take_profit_price
+                slot.entry.take_profit_price = take_profit_price
             elif slot.pending_rebuild is not None and layer.retracement_count(slot) > 0:
-                slot.pending_rebuild.exit_plan.take_profit_price = take_profit_price
+                slot.pending_rebuild.entry.take_profit_price = take_profit_price
         return take_profit_price
 
     def layer_initial_take_profit_price(
@@ -252,7 +248,7 @@ class SnowballPricing:
     def rebuild_take_profit_price(
         self,
         *,
-        pending: StopLossSnapshot,
+        pending: PendingRebuild,
         direction: PositionSide,
         retracement_count: int,
         entry_price: Money,
@@ -262,12 +258,9 @@ class SnowballPricing:
         """Return TP price for a rebuilt entry."""
         config = calculator.config
         if config.rebuild.take_profit.mode == RebuildTakeProfitMode.SAME_PRICE:
-            return pending.exit_plan.take_profit_price
+            return pending.take_profit_price
         if config.rebuild.take_profit.mode == RebuildTakeProfitMode.SAME_DISTANCE:
-            tp_pips = (
-                abs(pending.exit_plan.take_profit_price.amount - pending.entry_price.amount)
-                / pip_size
-            )
+            tp_pips = abs(pending.take_profit_price.amount - pending.entry_price.amount) / pip_size
         else:
             tp_pips = calculator.rebuild_take_profit_pips(retracement_count + 1)
         return self.take_profit_price(
@@ -280,7 +273,7 @@ class SnowballPricing:
     def rebuild_stop_loss_price(
         self,
         *,
-        pending: StopLossSnapshot,
+        pending: PendingRebuild,
         direction: PositionSide,
         retracement_count: int,
         entry_price: Money,
@@ -293,7 +286,7 @@ class SnowballPricing:
             return None
         mode = config.rebuild.stop_loss.mode
         if mode == RebuildStopLossMode.SAME_PRICE:
-            copied = pending.exit_plan.stop_loss_price
+            copied = pending.stop_loss_price
             if self.stop_loss_on_loss_side(
                 direction=direction,
                 entry_price=entry_price,
@@ -304,14 +297,14 @@ class SnowballPricing:
                 direction=direction,
                 entry_price=entry_price,
                 source_entry_price=pending.entry_price,
-                source_stop_loss_price=pending.exit_plan.stop_loss_price,
+                source_stop_loss_price=pending.stop_loss_price,
             )
         if mode == RebuildStopLossMode.SAME_DISTANCE:
             return self.reproject_stop_loss(
                 direction=direction,
                 entry_price=entry_price,
                 source_entry_price=pending.entry_price,
-                source_stop_loss_price=pending.exit_plan.stop_loss_price,
+                source_stop_loss_price=pending.stop_loss_price,
             )
         if mode == RebuildStopLossMode.MANUAL_DISTANCE:
             values = config.rebuild.stop_loss.manual_distances_pips
@@ -359,7 +352,7 @@ class SnowballPricing:
     def rebuild_trigger_hit(
         self,
         *,
-        pending: StopLossSnapshot,
+        pending: PendingRebuild,
         direction: PositionSide,
         tick: Tick,
         config: SnowballConfig,

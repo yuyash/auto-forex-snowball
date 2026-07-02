@@ -1,4 +1,4 @@
-"""Entry models for Snowball grid positions."""
+"""Entry models for Snowball grid slots."""
 
 from __future__ import annotations
 
@@ -10,50 +10,44 @@ from pydantic import AwareDatetime
 
 
 @dataclass(slots=True)
-class SlotPosition:
-    """Common position data for a grid slot."""
+class Entry:
+    """One entered trade held in a grid slot, with its planned exit prices.
+
+    An ``Entry`` bundles sizing, entry, and exit data for a single grid slot so
+    that a live trade and its take-profit/stop-loss can never fall out of sync.
+    """
 
     units: Decimal
     entry_price: Money
     opened_at: AwareDatetime
-
-
-@dataclass(slots=True)
-class Entry(SlotPosition):
-    """One live Snowball position in a grid slot."""
-
-
-@dataclass(slots=True)
-class SlotExitPlan:
-    """Exit prices owned by a grid slot."""
-
     take_profit_price: Money
     stop_loss_price: Money | None = None
 
 
 @dataclass(slots=True)
-class StopLossSnapshot(SlotPosition):
-    """Snapshot retained when a slot is waiting for stop-loss rebuild."""
+class PendingRebuild:
+    """A stop-loss-closed slot entry waiting to revisit its rebuild price."""
 
-    exit_plan: SlotExitPlan
+    entry: Entry
     closed_at: AwareDatetime
     stop_loss_exit_price: Money
 
-    @classmethod
-    def from_entry(
-        cls,
-        entry: Entry,
-        *,
-        exit_plan: SlotExitPlan,
-        closed_at: AwareDatetime,
-        stop_loss_exit_price: Money,
-    ) -> StopLossSnapshot:
-        """Create a rebuild snapshot from a live entry closed by stop loss."""
-        return cls(
-            units=entry.units,
-            entry_price=entry.entry_price,
-            exit_plan=exit_plan,
-            opened_at=entry.opened_at,
-            closed_at=closed_at,
-            stop_loss_exit_price=stop_loss_exit_price,
-        )
+    @property
+    def entry_price(self) -> Money:
+        """Return the original entry price of the stopped entry."""
+        return self.entry.entry_price
+
+    @property
+    def units(self) -> Decimal:
+        """Return the original units of the stopped entry."""
+        return self.entry.units
+
+    @property
+    def take_profit_price(self) -> Money:
+        """Return the original take-profit price of the stopped entry."""
+        return self.entry.take_profit_price
+
+    @property
+    def stop_loss_price(self) -> Money | None:
+        """Return the original stop-loss price of the stopped entry."""
+        return self.entry.stop_loss_price

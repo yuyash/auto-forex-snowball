@@ -116,13 +116,6 @@ class SnowballEventMapper:
         if intent.slot_key is not None:
             metadata.update(intent.slot_key.to_metadata())
             metadata.setdefault("is_rebuild", False)
-        if intent.exit_plan is not None:
-            metadata["planned_exit_price"] = str(intent.exit_plan.take_profit_price)
-            metadata["stop_loss_price"] = (
-                None
-                if intent.exit_plan.stop_loss_price is None
-                else str(intent.exit_plan.stop_loss_price)
-            )
         if intent.entry is not None:
             metadata.update(self._entry_metadata(intent.entry))
         return metadata
@@ -130,6 +123,10 @@ class SnowballEventMapper:
     def _entry_metadata(self, entry: Entry) -> dict[str, Any]:
         return {
             "planned_entry_price": str(entry.entry_price),
+            "planned_exit_price": str(entry.take_profit_price),
+            "stop_loss_price": (
+                None if entry.stop_loss_price is None else str(entry.stop_loss_price)
+            ),
         }
 
     def _require_entry(self, intent: SnowballIntent) -> Entry:

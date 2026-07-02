@@ -10,7 +10,7 @@ from core import Money, PositionSide, Tick, new_uuid
 from snowball.config import SnowballConfig
 from snowball.enums import CloseReason, CounterTakeProfitMode, EntryRole
 from snowball.intents import SnowballIntent
-from snowball.models.entries import Entry, SlotExitPlan, SlotPosition, StopLossSnapshot
+from snowball.models.entries import Entry, PendingRebuild
 from snowball.models.grid import Grid, Layer, Slot
 from snowball.models.state import Cycle, SnowballState
 from snowball.services.accounting import AccountSnapshot, SnowballAccounting
@@ -141,8 +141,7 @@ class SnowballEngine:
             slot=slot,
             pip_size=pip_size,
         )
-        entry, exit_plan = entry
-        slot.fill(entry=entry, exit_plan=exit_plan)
+        slot.place(entry)
         state.add_cycle(cycle)
         return [
             self._open_intent(
@@ -150,7 +149,6 @@ class SnowballEngine:
                 layer=layer,
                 slot=slot,
                 entry=entry,
-                exit_plan=exit_plan,
             )
         ]
 
@@ -170,8 +168,8 @@ class SnowballEngine:
         layer: Layer,
         slot: Slot,
         pip_size: Decimal,
-        pending: StopLossSnapshot | None = None,
-    ) -> tuple[Entry, SlotExitPlan]:
+        pending: PendingRebuild | None = None,
+    ) -> Entry:
         role = grid.role_for(layer, slot)
         retracement_count = layer.retracement_count(slot)
         entry_price = self.pricing.entry_side_price(direction, tick)
@@ -206,12 +204,10 @@ class SnowballEngine:
                 pip_size=pip_size,
             )
 
-        entry = Entry(
+        return Entry(
             units=units,
             entry_price=entry_price,
             opened_at=tick.timestamp,
-        )
-        exit_plan = SlotExitPlan(
             take_profit_price=take_profit_price,
             stop_loss_price=self._stop_loss_price(
                 direction=direction,
@@ -221,7 +217,6 @@ class SnowballEngine:
                 pending=pending,
             ),
         )
-        return entry, exit_plan
 
     def _stop_loss_price(
         self,
@@ -230,7 +225,7 @@ class SnowballEngine:
         entry_price: Money,
         retracement_count: int,
         pip_size: Decimal,
-        pending: StopLossSnapshot | None,
+        pending: PendingRebuild | None,
     ) -> Money | None:
         if not self.config.stop_loss.enabled:
             return None
@@ -269,7 +264,6 @@ class SnowballEngine:
         layer: Layer,
         slot: Slot,
         entry: Entry,
-        exit_plan: SlotExitPlan,
         metadata: dict[str, object] | None = None,
     ) -> SnowballIntent:
         """Create an open intent with a structure-derived entry key."""
@@ -278,7 +272,6 @@ class SnowballEngine:
             direction=cycle.direction,
             entry=entry,
             slot_key=cycle.slot_key(layer=layer, slot=slot),
-            exit_plan=exit_plan,
             metadata=metadata,
         )
 
@@ -289,7 +282,6 @@ class SnowballEngine:
         layer: Layer,
         slot: Slot,
         entry: Entry,
-        exit_plan: SlotExitPlan,
         price: Money,
         close_reason: CloseReason,
         metadata: dict[str, object] | None = None,
@@ -300,17 +292,10 @@ class SnowballEngine:
             direction=cycle.direction,
             entry=entry,
             slot_key=cycle.slot_key(layer=layer, slot=slot),
-            exit_plan=exit_plan,
             price=price,
             close_reason=close_reason,
             metadata=metadata,
         )
-
-    def _require_exit_plan(self, slot: Slot) -> SlotExitPlan:
-        """Return a live slot exit plan or raise for inconsistent state."""
-        if slot.exit_plan is None:
-            raise ValueError("slot has no live exit plan")
-        return slot.exit_plan
 
     def _counter_weighted_average_head(
         self,
@@ -337,10 +322,9 @@ class SnowballEngine:
                 break
             layer, slot = candidate
             entry = slot.entry
-            exit_plan = slot.exit_plan
             retracement_count = layer.retracement_count(slot)
             role = cycle.grid.role_for(layer, slot)
-            if entry is None or exit_plan is None:
+            if entry is None:
                 break
             exit_price = self.pricing.exit_side_price(cycle.direction, tick)
             refillable_counter = (
@@ -368,7 +352,6 @@ class SnowballEngine:
                     layer=layer,
                     slot=slot,
                     entry=entry,
-                    exit_plan=exit_plan,
                     price=exit_price,
                     close_reason=close_reason,
                     metadata={"realized_pl": str(realized)},
@@ -391,15 +374,11 @@ class SnowballEngine:
                 entry = slot.entry
                 if entry is None or entry is head:
                     continue
-                exit_plan = slot.exit_plan
-                if exit_plan is None:
-                    continue
                 if cycle.grid.role_for(layer, slot) == EntryRole.LAYER_INITIAL and live_count > 1:
                     continue
                 if self.pricing.take_profit_hit(
                     direction=cycle.direction,
                     entry=entry,
-                    exit_plan=exit_plan,
                     tick=tick,
                 ):
                     return layer, slot
@@ -414,16 +393,10 @@ class SnowballEngine:
         layer = cycle.grid.layers[0]
         slot = layer.r0
         entry = slot.entry
-        exit_plan = slot.exit_plan
-        if (
-            entry is None
-            or exit_plan is None
-            or not self.pricing.take_profit_hit(
-                direction=cycle.direction,
-                entry=entry,
-                exit_plan=exit_plan,
-                tick=tick,
-            )
+        if entry is None or not self.pricing.take_profit_hit(
+            direction=cycle.direction,
+            entry=entry,
+            tick=tick,
         ):
             return []
         if cycle.counter_entries():
@@ -443,7 +416,6 @@ class SnowballEngine:
                 layer=layer,
                 slot=slot,
                 entry=entry,
-                exit_plan=exit_plan,
                 price=exit_price,
                 close_reason=CloseReason.TAKE_PROFIT,
                 metadata={"realized_pl": str(realized)},
@@ -463,16 +435,10 @@ class SnowballEngine:
             highest = layer.highest_live_slot()
             for slot in list(reversed(layer.slots)):
                 entry = slot.entry
-                exit_plan = slot.exit_plan
-                if (
-                    entry is None
-                    or exit_plan is None
-                    or not self.pricing.stop_loss_hit(
-                        direction=cycle.direction,
-                        entry=entry,
-                        exit_plan=exit_plan,
-                        tick=tick,
-                    )
+                if entry is None or not self.pricing.stop_loss_hit(
+                    direction=cycle.direction,
+                    entry=entry,
+                    tick=tick,
                 ):
                     continue
                 if self._stop_loss_temporarily_protected(layer=layer, slot=slot, highest=highest):
@@ -483,24 +449,17 @@ class SnowballEngine:
                     entry=entry,
                     exit_price=exit_price,
                 )
-                snapshot = (
-                    StopLossSnapshot.from_entry(
-                        entry,
-                        exit_plan=exit_plan,
-                        closed_at=tick.timestamp,
-                        stop_loss_exit_price=exit_price,
-                    )
-                    if self.config.rebuild.enabled
-                    else None
+                slot.close_for_stop_loss(
+                    closed_at=tick.timestamp,
+                    stop_loss_exit_price=exit_price,
+                    rebuildable=self.config.rebuild.enabled,
                 )
-                slot.close_for_stop_loss(snapshot)
                 intents.append(
                     self._close_intent(
                         cycle=cycle,
                         layer=layer,
                         slot=slot,
                         entry=entry,
-                        exit_plan=exit_plan,
                         price=exit_price,
                         close_reason=CloseReason.STOP_LOSS,
                         metadata={"realized_pl": str(realized)},
@@ -557,26 +516,25 @@ class SnowballEngine:
                 pip_size=pip_size,
                 pending=pending,
             )
-            entry, exit_plan = entry
             entry.entry_price = self.grid_policy.clamp_entry_price(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
                 entry_price=entry.entry_price,
             )
-            exit_plan.take_profit_price = self.grid_policy.clamp_take_profit(
+            entry.take_profit_price = self.grid_policy.clamp_take_profit(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
-                take_profit_price=exit_plan.take_profit_price,
+                take_profit_price=entry.take_profit_price,
             )
             self.grid_policy.propagate_pending_take_profit(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
-                take_profit_price=exit_plan.take_profit_price,
+                take_profit_price=entry.take_profit_price,
             )
-            slot.complete_rebuild(entry=entry, exit_plan=exit_plan)
+            slot.complete_rebuild(entry)
             if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
                 self.pricing.sync_weighted_average_take_profits(layer)
             intents.append(
@@ -585,7 +543,6 @@ class SnowballEngine:
                     layer=layer,
                     slot=slot,
                     entry=entry,
-                    exit_plan=exit_plan,
                     metadata={"is_rebuild": True},
                 )
             )
@@ -676,17 +633,15 @@ class SnowballEngine:
         interval = self.calculator.counter_interval_pips(layer.retracement_count(slot))
         if adverse < interval:
             return None
-        head = cycle.effective_head()
-        entry_head = head if isinstance(head, Entry) else None
-        entry, exit_plan = self._create_counter_entry(
+        entry = self._create_counter_entry(
             cycle=cycle,
             tick=tick,
             pip_size=pip_size,
             layer=layer,
             slot=slot,
-            head=entry_head,
+            head=cycle.head(),
         )
-        slot.fill(entry=entry, exit_plan=exit_plan)
+        slot.place(entry)
         if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
             self.pricing.sync_weighted_average_take_profits(layer)
         cycle.refresh_status()
@@ -695,7 +650,6 @@ class SnowballEngine:
             layer=layer,
             slot=slot,
             entry=entry,
-            exit_plan=exit_plan,
             metadata={
                 "expected_interval_pips": str(interval),
                 "actual_interval_pips": str(adverse),
@@ -711,8 +665,8 @@ class SnowballEngine:
         layer: Layer,
         slot: Slot,
         head: Entry | None,
-    ) -> tuple[Entry, SlotExitPlan]:
-        entry, exit_plan = self._create_entry(
+    ) -> Entry:
+        entry = self._create_entry(
             tick=tick,
             direction=cycle.direction,
             grid=cycle.grid,
@@ -722,7 +676,7 @@ class SnowballEngine:
         )
         if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
             include_head = self._counter_weighted_average_head(layer=layer, cycle_head=head)
-            exit_plan.take_profit_price = self.pricing.counter_take_profit_price(
+            entry.take_profit_price = self.pricing.counter_take_profit_price(
                 layer=layer,
                 direction=cycle.direction,
                 retracement_count=layer.retracement_count(slot),
@@ -732,7 +686,7 @@ class SnowballEngine:
                 calculator=self.calculator,
                 include_head=include_head,
             )
-        return entry, exit_plan
+        return entry
 
     def _try_open_next_layer(
         self,
@@ -774,8 +728,6 @@ class SnowballEngine:
             units=self.config.sizing.initial_entry_units_multiplier * layer.base_units,
             entry_price=entry_price,
             opened_at=tick.timestamp,
-        )
-        exit_plan = SlotExitPlan(
             take_profit_price=self.pricing.layer_initial_take_profit_price(
                 new_price=entry_price,
                 previous_layer=previous_layer,
@@ -791,14 +743,13 @@ class SnowballEngine:
                 pending=None,
             ),
         )
-        slot.fill(entry=entry, exit_plan=exit_plan)
+        slot.place(entry)
         cycle.refresh_status()
         return self._open_intent(
             cycle=cycle,
             layer=layer,
             slot=slot,
             entry=entry,
-            exit_plan=exit_plan,
             metadata={
                 "expected_interval_pips": str(interval),
                 "actual_interval_pips": str(adverse),
@@ -821,7 +772,7 @@ class SnowballEngine:
         self,
         *,
         direction: PositionSide,
-        reference: SlotPosition,
+        reference: Entry,
         current_entry_price: Money,
     ) -> bool:
         if direction == PositionSide.LONG:
@@ -877,7 +828,6 @@ class SnowballEngine:
                 )
                 return intents
             cycle, layer, slot, entry = target
-            exit_plan = self._require_exit_plan(slot)
             exit_price = self.pricing.exit_side_price(cycle.direction, tick)
             realized = self.pricing.realized_pl(
                 direction=cycle.direction,
@@ -893,7 +843,6 @@ class SnowballEngine:
                     layer=layer,
                     slot=slot,
                     entry=entry,
-                    exit_plan=exit_plan,
                     price=exit_price,
                     close_reason=CloseReason.SHRINK,
                     metadata={

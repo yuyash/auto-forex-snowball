@@ -7,9 +7,10 @@ from decimal import Decimal
 from uuid import UUID
 
 from core import Money
+from pydantic import AwareDatetime
 
 from snowball.enums import EntryRole, SlotStatus
-from snowball.models.entries import Entry, SlotExitPlan, SlotPosition, StopLossSnapshot
+from snowball.models.entries import Entry, PendingRebuild
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +51,16 @@ class GridSlotKey:
 
 @dataclass(slots=True)
 class Slot:
-    """One retracement slot within a layer."""
+    """One retracement slot within a layer.
+
+    A slot moves through four states, each fully determined by its fields:
+    ``AVAILABLE`` (empty), ``OCCUPIED`` (a live ``entry``), ``PENDING_REBUILD``
+    (a stopped entry awaiting rebuild), and ``SEALED`` (closed, not refillable).
+    All transitions go through the methods below so the state stays consistent.
+    """
 
     entry: Entry | None = None
-    exit_plan: SlotExitPlan | None = None
-    pending_rebuild: StopLossSnapshot | None = None
+    pending_rebuild: PendingRebuild | None = None
     sealed: bool = False
     build_count: int = 0
 
@@ -79,43 +85,53 @@ class Slot:
         """Return True when a new entry may be placed here."""
         return self.status == SlotStatus.AVAILABLE
 
-    def fill(self, *, entry: Entry, exit_plan: SlotExitPlan) -> None:
-        """Place a live entry in the slot."""
-        if not self.is_available and self.pending_rebuild is None:
-            raise ValueError("slot is not fillable")
+    def place(self, entry: Entry) -> None:
+        """Place a live entry in an available slot."""
+        if not self.is_available:
+            raise ValueError("slot is not available")
         self.entry = entry
-        self.exit_plan = exit_plan
         self.pending_rebuild = None
         self.sealed = False
         self.build_count += 1
 
     def close_for_take_profit(self, *, refillable: bool) -> Entry:
-        """Remove a live entry after normal TP close."""
+        """Remove a live entry after a normal take-profit close."""
         if self.entry is None:
             raise ValueError("slot has no live entry")
         entry = self.entry
         self.entry = None
-        self.exit_plan = None
         self.sealed = not refillable
         return entry
 
-    def close_for_stop_loss(self, snapshot: StopLossSnapshot | None) -> Entry:
-        """Remove a live entry after stop loss."""
-        if self.entry is None or self.exit_plan is None:
+    def close_for_stop_loss(
+        self,
+        *,
+        closed_at: AwareDatetime,
+        stop_loss_exit_price: Money,
+        rebuildable: bool,
+    ) -> Entry:
+        """Remove a live entry after stop loss, optionally staging a rebuild."""
+        if self.entry is None:
             raise ValueError("slot has no live entry")
         entry = self.entry
         self.entry = None
-        self.exit_plan = None
-        self.pending_rebuild = snapshot
-        self.sealed = snapshot is None
+        if rebuildable:
+            self.pending_rebuild = PendingRebuild(
+                entry=entry,
+                closed_at=closed_at,
+                stop_loss_exit_price=stop_loss_exit_price,
+            )
+            self.sealed = False
+        else:
+            self.pending_rebuild = None
+            self.sealed = True
         return entry
 
-    def complete_rebuild(self, *, entry: Entry, exit_plan: SlotExitPlan) -> None:
-        """Replace a pending rebuild snapshot with a live rebuilt entry."""
+    def complete_rebuild(self, entry: Entry) -> None:
+        """Replace a pending rebuild with a live rebuilt entry."""
         if self.pending_rebuild is None:
             raise ValueError("slot has no pending rebuild")
         self.entry = entry
-        self.exit_plan = exit_plan
         self.pending_rebuild = None
         self.sealed = False
         self.build_count += 1
@@ -130,27 +146,33 @@ class Slot:
 
     def reference_take_profit_price(self) -> Money | None:
         """Return the live or pending take-profit price."""
-        if self.exit_plan is not None:
-            return self.exit_plan.take_profit_price
+        if self.entry is not None:
+            return self.entry.take_profit_price
         if self.pending_rebuild is not None:
-            return self.pending_rebuild.exit_plan.take_profit_price
+            return self.pending_rebuild.take_profit_price
         return None
 
     def reference_stop_loss_price(self) -> Money | None:
         """Return the live or pending stop-loss price."""
-        if self.exit_plan is not None:
-            return self.exit_plan.stop_loss_price
+        if self.entry is not None:
+            return self.entry.stop_loss_price
         if self.pending_rebuild is not None:
-            return self.pending_rebuild.exit_plan.stop_loss_price
+            return self.pending_rebuild.stop_loss_price
         return None
 
 
 @dataclass(slots=True)
 class Layer:
-    """One Snowball layer containing R0..Rmax slots."""
+    """One Snowball layer containing R0..Rmax slots.
+
+    The slot list is fixed at creation and never grows or shrinks; only the
+    contents of individual slots change. It is kept private so callers cannot
+    add or remove slots behind the layer's back; use ``slots`` for a read-only
+    view and the ``Slot`` methods to mutate a slot in place.
+    """
 
     base_units: Decimal
-    slots: list[Slot] = field(default_factory=list)
+    _slots: list[Slot] = field(default_factory=list)
 
     @classmethod
     def create(
@@ -162,16 +184,26 @@ class Layer:
         """Create a layer with R0 through Rmax."""
         return cls(
             base_units=base_units,
-            slots=[Slot() for _ in range(max_retracements + 1)],
+            _slots=[Slot() for _ in range(max_retracements + 1)],
         )
+
+    @classmethod
+    def from_slots(cls, *, base_units: Decimal, slots: list[Slot]) -> Layer:
+        """Rebuild a layer from previously serialized slots."""
+        return cls(base_units=base_units, _slots=list(slots))
+
+    @property
+    def slots(self) -> tuple[Slot, ...]:
+        """Return the layer's slots in ascending R order (read-only view)."""
+        return tuple(self._slots)
 
     def slot(self, retracement_count: int) -> Slot:
         """Return one retracement slot."""
-        return self.slots[retracement_count]
+        return self._slots[retracement_count]
 
     def retracement_count(self, slot: Slot) -> int:
         """Return the R number derived from a slot's position in this layer."""
-        for index, candidate in enumerate(self.slots):
+        for index, candidate in enumerate(self._slots):
             if candidate is slot:
                 return index
         raise ValueError("slot does not belong to this layer")
@@ -183,26 +215,26 @@ class Layer:
 
     def live_entries(self) -> list[Entry]:
         """Return live entries in ascending R order."""
-        return [slot.entry for slot in self.slots if slot.entry is not None]
+        return [slot.entry for slot in self._slots if slot.entry is not None]
 
     def counter_entries(self) -> list[Entry]:
         """Return live R1+ entries in ascending R order."""
-        return [slot.entry for slot in self.slots[1:] if slot.entry is not None]
+        return [slot.entry for slot in self._slots[1:] if slot.entry is not None]
 
     def present_slots(self) -> list[Slot]:
         """Return slots with live or pending logical presence."""
-        return [slot for slot in self.slots if slot.is_present]
+        return [slot for slot in self._slots if slot.is_present]
 
     def highest_present_slot(self) -> Slot | None:
         """Return the highest-R live or pending slot."""
-        for slot in reversed(self.slots):
+        for slot in reversed(self._slots):
             if slot.is_present:
                 return slot
         return None
 
     def highest_live_slot(self) -> Slot | None:
         """Return the highest-R live slot."""
-        for slot in reversed(self.slots):
+        for slot in reversed(self._slots):
             if slot.entry is not None:
                 return slot
         return None
@@ -217,7 +249,7 @@ class Layer:
         Lower refillable slots are not reused while any higher R slot is present.
         This preserves the Snowball grid progression.
         """
-        for retracement_count, slot in enumerate(self.slots[1:], start=1):
+        for retracement_count, slot in enumerate(self._slots[1:], start=1):
             if slot.pending_rebuild is not None:
                 continue
             if slot.entry is not None:
@@ -227,7 +259,7 @@ class Layer:
             if retracement_count > max_refillable_retracement and slot.build_count > 0:
                 return None
             higher_present = any(
-                higher.is_present for higher in self.slots[retracement_count + 1 :]
+                higher.is_present for higher in self._slots[retracement_count + 1 :]
             )
             if higher_present and slot.build_count > 0:
                 continue
@@ -236,20 +268,25 @@ class Layer:
 
     def is_empty(self) -> bool:
         """Return True when the layer has no live or pending entries."""
-        return not any(slot.is_present for slot in self.slots)
+        return not any(slot.is_present for slot in self._slots)
 
 
 @dataclass(slots=True)
 class Grid:
-    """Layered L/R grid for a single directional cycle."""
+    """Layered L/R grid for a single directional cycle.
 
-    layers: list[Layer]
+    The layer list is kept private so callers cannot append or pop layers
+    directly; use ``add_layer`` / ``remove_empty_top_layers`` to change the
+    structure and ``layers`` for a read-only view.
+    """
+
+    _layers: list[Layer]
 
     @classmethod
     def create(cls, *, base_units: Decimal, max_retracements: int) -> Grid:
         """Create a grid with one empty L1 layer."""
         return cls(
-            layers=[
+            _layers=[
                 Layer.create(
                     base_units=base_units,
                     max_retracements=max_retracements,
@@ -257,10 +294,20 @@ class Grid:
             ]
         )
 
+    @classmethod
+    def from_layers(cls, layers: list[Layer]) -> Grid:
+        """Rebuild a grid from previously serialized layers."""
+        return cls(_layers=list(layers))
+
+    @property
+    def layers(self) -> tuple[Layer, ...]:
+        """Return the grid's layers from L1 upward (read-only view)."""
+        return tuple(self._layers)
+
     @property
     def current_layer(self) -> Layer:
         """Return the highest-numbered layer."""
-        return self.layers[-1]
+        return self._layers[-1]
 
     def add_layer(self, *, base_units: Decimal, max_retracements: int) -> Layer:
         """Append and return a new layer."""
@@ -268,12 +315,12 @@ class Grid:
             base_units=base_units,
             max_retracements=max_retracements,
         )
-        self.layers.append(layer)
+        self._layers.append(layer)
         return layer
 
     def layer_number(self, layer: Layer) -> int:
         """Return the L number derived from a layer's position in this grid."""
-        for index, candidate in enumerate(self.layers, start=1):
+        for index, candidate in enumerate(self._layers, start=1):
             if candidate is layer:
                 return index
         raise ValueError("layer does not belong to this grid")
@@ -289,28 +336,28 @@ class Grid:
     def all_live_entries(self) -> list[Entry]:
         """Return all live entries in grid order."""
         entries: list[Entry] = []
-        for layer in self.layers:
+        for layer in self._layers:
             entries.extend(layer.live_entries())
         return entries
 
     def all_counter_entries(self) -> list[Entry]:
         """Return live counter entries in grid order."""
         entries: list[Entry] = []
-        for layer in self.layers:
+        for layer in self._layers:
             entries.extend(layer.counter_entries())
         return entries
 
     def all_present_slots(self) -> list[tuple[Layer, Slot]]:
         """Return live or pending slots in grid order."""
         present: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
+        for layer in self._layers:
             present.extend((layer, slot) for slot in layer.slots if slot.is_present)
         return present
 
     def pending_rebuild_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots waiting for rebuild."""
         pending: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
+        for layer in self._layers:
             pending.extend(
                 (layer, slot) for slot in layer.slots if slot.pending_rebuild is not None
             )
@@ -321,14 +368,14 @@ class Grid:
         entries = self.all_live_entries()
         return entries[0] if entries else None
 
-    def effective_head(self) -> SlotPosition | None:
-        """Return live head, falling back to the oldest pending rebuild."""
+    def effective_head(self) -> Entry | None:
+        """Return the live head entry, falling back to the oldest pending rebuild."""
         head = self.head_entry()
         if head is not None:
             return head
         for _layer, slot in self.pending_rebuild_slots():
             if slot.pending_rebuild is not None:
-                return slot.pending_rebuild
+                return slot.pending_rebuild.entry
         return None
 
     def tail_present_slot(self) -> tuple[Layer, Slot] | None:
@@ -346,8 +393,8 @@ class Grid:
 
     def remove_empty_top_layers(self) -> None:
         """Remove empty non-L1 layers from the top of the grid."""
-        while len(self.layers) > 1 and self.layers[-1].is_empty():
-            self.layers.pop()
+        while len(self._layers) > 1 and self._layers[-1].is_empty():
+            self._layers.pop()
 
     def shrink_front_entry(self) -> Entry | None:
         """Return the lowest L/R live entry eligible as a shrink candidate."""
@@ -364,7 +411,7 @@ class Grid:
 
     def find_entry_slot(self, entry: Entry) -> tuple[Layer, Slot] | None:
         """Find the layer and slot containing an entry."""
-        for layer in self.layers:
+        for layer in self._layers:
             for slot in layer.slots:
                 if slot.entry is entry:
                     return layer, slot

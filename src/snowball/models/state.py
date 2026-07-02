@@ -11,7 +11,7 @@ from uuid import UUID
 from core import PositionSide, StrategyState
 
 from snowball.enums import CycleStatus
-from snowball.models.entries import Entry, SlotPosition
+from snowball.models.entries import Entry
 from snowball.models.grid import Grid, GridSlotKey, Layer, Slot
 
 STATE_KEY = "snowball"
@@ -100,7 +100,7 @@ class Cycle:
         """Return the live cycle head."""
         return self.grid.head_entry()
 
-    def effective_head(self) -> SlotPosition | None:
+    def effective_head(self) -> Entry | None:
         """Return the live or pending head used for averaging decisions."""
         return self.grid.effective_head()
 
