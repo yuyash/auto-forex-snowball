@@ -29,12 +29,12 @@ class SnowballRuntime:
         return StrategyResult(state=state.to_strategy_state())
 
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
-        """Process a tick and map Snowball intents to Core strategy events."""
+        """Process a tick and map Snowball events to Core strategy events."""
         state = self._state_from_context(context)
         result = self.engine.process_tick(tick=tick, state=state, pip_size=context.pip_size)
         events = tuple(
-            self.event_mapper.to_strategy_event(intent=intent, tick=tick, context=context)
-            for intent in result.intents
+            self.event_mapper.to_strategy_event(event=event, tick=tick, context=context)
+            for event in result.events
         )
         return StrategyResult(events=events, state=result.state.to_strategy_state())
 

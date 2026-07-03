@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 from core import Strategy, StrategyContext, StrategyParameters, StrategyResult, Tick
 
 from snowball.config import SnowballConfig
@@ -18,7 +15,7 @@ class SnowballStrategy(Strategy):
         self,
         *,
         name: str = "snowball",
-        parameters: StrategyParameters | Mapping[str, Any] | None = None,
+        parameters: StrategyParameters | None = None,
     ) -> None:
         super().__init__(name=name, parameters=parameters)
         self._config = SnowballConfig.from_parameters(self.parameters)
@@ -32,10 +29,10 @@ class SnowballStrategy(Strategy):
     @classmethod
     def normalize_parameters(
         cls,
-        parameters: StrategyParameters | Mapping[str, Any],
+        parameters: StrategyParameters,
     ) -> StrategyParameters:
         """Normalize external parameters to canonical Snowball config values."""
-        merged = cls.default_parameters().merge(StrategyParameters.model_validate(parameters))
+        merged = cls.default_parameters().merge(parameters)
         return StrategyParameters.of(**SnowballConfig.from_parameters(merged).to_dict())
 
     @classmethod

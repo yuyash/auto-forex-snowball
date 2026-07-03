@@ -6,13 +6,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Self
-from uuid import UUID
 
 from core import PositionSide, StrategyState
 
 from snowball.enums import CycleStatus
-from snowball.models.entries import Entry
-from snowball.models.grid import Grid, GridSlotKey, Layer, Slot
+from snowball.models.entries import FilledEntry
+from snowball.models.grid import Grid, Layer, Slot
+from snowball.models.identifiers import CycleId, EntryId, IntegerIdGenerator
 
 STATE_KEY = "snowball"
 
@@ -21,7 +21,7 @@ STATE_KEY = "snowball"
 class Cycle:
     """One directional Snowball cycle."""
 
-    _cycle_id: UUID
+    _cycle_id: CycleId
     _direction: PositionSide
     _grid: Grid
     _status: CycleStatus = CycleStatus.ACTIVE
@@ -30,7 +30,7 @@ class Cycle:
     def create(
         cls,
         *,
-        cycle_id: UUID,
+        cycle_id: CycleId,
         direction: PositionSide,
         grid: Grid,
         status: CycleStatus = CycleStatus.ACTIVE,
@@ -44,7 +44,7 @@ class Cycle:
         )
 
     @property
-    def cycle_id(self) -> UUID:
+    def cycle_id(self) -> CycleId:
         """Return the stable cycle identifier."""
         return self._cycle_id
 
@@ -88,33 +88,35 @@ class Cycle:
         """Return True for a short cycle."""
         return self._direction == PositionSide.SHORT
 
-    def live_entries(self) -> list[Entry]:
+    def live_entries(self) -> list[FilledEntry]:
         """Return live entries in grid order."""
         return self.grid.all_live_entries()
 
-    def counter_entries(self) -> list[Entry]:
+    def counter_entries(self) -> list[FilledEntry]:
         """Return counter entries in grid order."""
         return self.grid.all_counter_entries()
 
-    def head(self) -> Entry | None:
+    def head(self) -> FilledEntry | None:
         """Return the live cycle head."""
         return self.grid.head_entry()
 
-    def effective_head(self) -> Entry | None:
+    def effective_head(self) -> FilledEntry | None:
         """Return the live or pending head used for averaging decisions."""
         return self.grid.effective_head()
 
-    def slot_key(self, *, layer: Layer, slot: Slot) -> GridSlotKey:
-        """Return a structure-derived key for a slot in this cycle."""
-        return self.grid.slot_key(cycle_id=self.cycle_id, layer=layer, slot=slot)
+    def next_entry_id(self, *, layer: Layer, slot: Slot) -> EntryId:
+        """Return the next entry identifier for a slot in this cycle."""
+        return self.grid.next_entry_id(cycle_id=self.cycle_id, layer=layer, slot=slot)
 
     def refresh_status(self) -> None:
         """Update the lifecycle status from current grid contents."""
         has_live = bool(self.grid.all_live_entries())
-        has_pending = self.grid.has_pending_rebuilds()
-        if has_live:
+        has_requested_entry = self.grid.has_requested_entries()
+        has_requested_stop_loss = self.grid.has_requested_stop_losses()
+        has_filled_stop_loss = self.grid.has_filled_stop_loss_entries()
+        if has_live or has_requested_entry or has_requested_stop_loss:
             self._status = CycleStatus.ACTIVE
-        elif has_pending:
+        elif has_filled_stop_loss:
             self._status = CycleStatus.PENDING
         else:
             self._status = CycleStatus.COMPLETED
@@ -125,6 +127,7 @@ class SnowballState:
     """Mutable Snowball engine state."""
 
     _cycles: list[Cycle] = field(default_factory=list)
+    _cycle_id_generator: IntegerIdGenerator = field(default_factory=IntegerIdGenerator)
 
     @classmethod
     def new(cls) -> SnowballState:
@@ -134,7 +137,11 @@ class SnowballState:
     @classmethod
     def from_cycles(cls, cycles: Iterable[Cycle]) -> Self:
         """Create state from active or pending cycles."""
-        return cls(_cycles=list(cycles))
+        cycle_list = list(cycles)
+        return cls(
+            _cycles=cycle_list,
+            _cycle_id_generator=IntegerIdGenerator.after(cycle.cycle_id for cycle in cycle_list),
+        )
 
     @property
     def cycles(self) -> tuple[Cycle, ...]:
@@ -144,6 +151,19 @@ class SnowballState:
     def add_cycle(self, cycle: Cycle) -> None:
         """Add a cycle to state."""
         self._cycles.append(cycle)
+
+    @property
+    def next_cycle_id_value(self) -> int:
+        """Return the next cycle id without advancing the generator."""
+        return self._cycle_id_generator.next_value
+
+    def next_cycle_id(self) -> CycleId:
+        """Return the next cycle id and advance the generator."""
+        return self._cycle_id_generator.next()
+
+    def restore_next_cycle_id(self, next_cycle_id: int) -> None:
+        """Restore the next cycle id after deserialization."""
+        self._cycle_id_generator = IntegerIdGenerator(next_cycle_id)
 
     @classmethod
     def from_strategy_state(
@@ -174,9 +194,9 @@ class SnowballState:
                 return cycle
         return None
 
-    def live_entries(self) -> list[Entry]:
+    def live_entries(self) -> list[FilledEntry]:
         """Return all live entries."""
-        entries: list[Entry] = []
+        entries: list[FilledEntry] = []
         for cycle in self._cycles:
             entries.extend(cycle.live_entries())
         return entries
@@ -188,9 +208,9 @@ class SnowballState:
         for cycle in self._cycles:
             for entry in cycle.live_entries():
                 if cycle.direction == PositionSide.LONG:
-                    long_units += entry.units
+                    long_units += entry.filled_units
                 else:
-                    short_units += entry.units
+                    short_units += entry.filled_units
         return long_units, short_units
 
     def refresh_cycle_statuses(self) -> None:

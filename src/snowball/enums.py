@@ -84,12 +84,3 @@ class CloseReason(StrEnum):
     STOP_LOSS = "stop_loss"
     SHRINK = "shrink"
     EMERGENCY = "emergency"
-
-
-class SnowballIntentType(StrEnum):
-    """Execution intent emitted by the Snowball engine."""
-
-    OPEN = "open"
-    CLOSE = "close"
-    STATUS = "status"
-    STOP = "stop"

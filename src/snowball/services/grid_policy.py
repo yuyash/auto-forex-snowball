@@ -49,12 +49,13 @@ class SnowballGridPolicy:
         layer: Layer,
         retracement_count: int,
     ) -> Money | None:
-        """Return the tightest live entry bound before one slot."""
+        """Return the tightest present entry bound before one slot."""
         bound: Money | None = None
         for _layer, slot in self._preceding_slots(cycle, layer, retracement_count):
-            if slot.entry is None:
+            entry_price = slot.reference_entry_price()
+            if entry_price is None:
                 continue
-            bound = self._combine(cycle.direction, bound, slot.entry.entry_price)
+            bound = self._combine(cycle.direction, bound, entry_price)
         return bound
 
     def preceding_take_profit_bound(
@@ -114,19 +115,19 @@ class SnowballGridPolicy:
     ) -> None:
         """Adjust preceding pending TPs when a later rebuild sets a tighter bound."""
         for _layer, slot in self._preceding_slots(cycle, layer, retracement_count):
-            pending = slot.pending_rebuild
-            if pending is None:
+            stop_loss_entry = slot.filled_stop_loss_entry
+            if stop_loss_entry is None:
                 continue
             if (
                 cycle.direction == PositionSide.LONG
-                and pending.entry.take_profit_price < take_profit_price
+                and stop_loss_entry.original_entry.planned_take_profit_price < take_profit_price
             ):
-                pending.entry.take_profit_price = take_profit_price
+                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
             elif (
                 cycle.direction == PositionSide.SHORT
-                and pending.entry.take_profit_price > take_profit_price
+                and stop_loss_entry.original_entry.planned_take_profit_price > take_profit_price
             ):
-                pending.entry.take_profit_price = take_profit_price
+                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
 
     def _present_slots(self, cycle: Cycle) -> list[PresentSlot]:
         present: list[PresentSlot] = []

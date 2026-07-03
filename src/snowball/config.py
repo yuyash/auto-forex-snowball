@@ -33,7 +33,7 @@ class PipProgressionConfig:
     @classmethod
     def from_mapping(
         cls,
-        values: Mapping[str, Any] | None,
+        values: Mapping[str, Any],
         *,
         default: PipProgressionConfig | None = None,
     ) -> PipProgressionConfig:
@@ -74,7 +74,7 @@ class PositionSizingConfig:
     additional_layer_base_units_multiplier: Decimal = Decimal("1")
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> PositionSizingConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> PositionSizingConfig:
         """Build sizing config from nested values."""
         config = cls()
         if not values:
@@ -121,7 +121,7 @@ class SlotRefillConfig:
     max_reusable_retracement: int = 1
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> SlotRefillConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> SlotRefillConfig:
         """Build refill config from nested values."""
         config = cls()
         if not values:
@@ -145,7 +145,7 @@ class GridConfig:
     refill: SlotRefillConfig = SlotRefillConfig()
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> GridConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> GridConfig:
         """Build grid config from nested values."""
         config = cls()
         if not values:
@@ -192,7 +192,7 @@ class CycleConfig:
     reseed_when_all_positions_pending_rebuild: bool = False
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> CycleConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> CycleConfig:
         """Build cycle config from nested values."""
         config = cls()
         if not values:
@@ -224,7 +224,7 @@ class CounterTakeProfitConfig:
     @classmethod
     def from_mapping(
         cls,
-        values: Mapping[str, Any] | None,
+        values: Mapping[str, Any],
     ) -> CounterTakeProfitConfig:
         """Build counter take-profit config from nested values."""
         config = cls()
@@ -256,7 +256,7 @@ class CounterConfig:
     take_profit: CounterTakeProfitConfig = CounterTakeProfitConfig()
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> CounterConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> CounterConfig:
         """Build counter config from nested values."""
         config = cls()
         if not values:
@@ -287,7 +287,7 @@ class StopLossProtectionConfig:
     from_retracement: int = 1
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> StopLossProtectionConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> StopLossProtectionConfig:
         """Build stop-loss protection config from nested values."""
         config = cls()
         if not values:
@@ -316,7 +316,7 @@ class StopLossConfig:
     protect_highest_retracement: StopLossProtectionConfig = StopLossProtectionConfig()
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> StopLossConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> StopLossConfig:
         """Build stop-loss config from nested values."""
         config = cls()
         if not values:
@@ -352,7 +352,7 @@ class RebuildTriggerConfig:
     buffer_pips: Decimal = Decimal("0")
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> RebuildTriggerConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildTriggerConfig:
         """Build rebuild trigger config from nested values."""
         config = cls()
         if not values:
@@ -375,7 +375,7 @@ class RebuildStopLossConfig:
     manual_distances_pips: tuple[Decimal, ...] = ()
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> RebuildStopLossConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildStopLossConfig:
         """Build rebuild stop-loss config from nested values."""
         config = cls()
         if not values:
@@ -412,7 +412,7 @@ class RebuildTakeProfitConfig:
     )
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> RebuildTakeProfitConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildTakeProfitConfig:
         """Build rebuild take-profit config from nested values."""
         config = cls()
         if not values:
@@ -448,7 +448,7 @@ class RebuildConfig:
     take_profit: RebuildTakeProfitConfig = RebuildTakeProfitConfig()
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> RebuildConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildConfig:
         """Build rebuild config from nested values."""
         config = cls()
         if not values:
@@ -483,7 +483,7 @@ class ProtectionConfig:
     emergency_margin_percent: Decimal = Decimal("95")
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> ProtectionConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> ProtectionConfig:
         """Build protection config from nested values."""
         config = cls()
         if not values:
@@ -526,7 +526,7 @@ class AccountValuationConfig:
     quote_to_account_rate: Decimal = Decimal("1")
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> AccountValuationConfig:
+    def from_mapping(cls, values: Mapping[str, Any]) -> AccountValuationConfig:
         """Build account valuation config from nested values."""
         config = cls()
         if not values:
@@ -571,14 +571,12 @@ class SnowballConfig:
     @classmethod
     def from_parameters(
         cls,
-        parameters: StrategyParameters | Mapping[str, Any] | None,
+        parameters: StrategyParameters | None,
     ) -> SnowballConfig:
         """Build a validated config from nested strategy parameters."""
         if parameters is None:
             return cls().validate()
-        values = (
-            parameters.to_dict() if isinstance(parameters, StrategyParameters) else dict(parameters)
-        )
+        values = parameters.to_dict()
         config = cls(
             sizing=PositionSizingConfig.from_mapping(_nested(values, "sizing")),
             grid=GridConfig.from_mapping(_nested(values, "grid")),
@@ -616,10 +614,10 @@ class SnowballConfig:
         return _serialize(asdict(self))
 
 
-def _nested(values: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:
+def _nested(values: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = values.get(key)
     if value is None:
-        return None
+        return {}
     if not isinstance(value, Mapping):
         raise ValueError(f"{key} must be an object")
     return value
