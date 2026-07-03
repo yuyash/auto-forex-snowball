@@ -109,7 +109,8 @@ class Cycle:
         return self.grid.next_entry_id(cycle_id=self.cycle_id, layer=layer, slot=slot)
 
     def refresh_status(self) -> None:
-        """Update the lifecycle status from current grid contents."""
+        """Normalize the grid and update the lifecycle status from current contents."""
+        self.grid.remove_empty_top_layers()
         has_live = bool(self.grid.all_live_entries())
         has_requested_entry = self.grid.has_requested_entries()
         has_requested_stop_loss = self.grid.has_requested_stop_losses()

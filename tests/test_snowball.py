@@ -5,6 +5,7 @@ from core import (
     Currency,
     CurrencyPair,
     Money,
+    PositionSide,
     StrategyContext,
     StrategyParameters,
     TaskType,
@@ -30,9 +31,9 @@ from snowball.models.entries import (
     RequestedStopLossEntry,
     SealedEntry,
 )
-from snowball.models.grid import Slot
+from snowball.models.grid import Grid, Slot
 from snowball.models.identifiers import EntryId, EntryIdType
-from snowball.models.state import SnowballState
+from snowball.models.state import Cycle, SnowballState
 
 USD_JPY = CurrencyPair.of("USD_JPY")
 
@@ -152,13 +153,21 @@ class TestSnowballEngine:
         assert slot.status == SlotStatus.SEALED
         assert not slot.is_available
 
+    def test_cycle_refresh_status_removes_empty_top_layers(self) -> None:
+        grid = Grid.create(base_units=Decimal("1000"), max_retracements=1)
+        grid.add_layer(base_units=Decimal("2000"), max_retracements=1)
+        cycle = Cycle.create(cycle_id=1, direction=PositionSide.LONG, grid=grid)
+
+        cycle.refresh_status()
+
+        assert len(cycle.grid.layers) == 1
+
     def test_first_tick_opens_long_and_short_cycles_when_hedging_enabled(self) -> None:
         config = SnowballConfig()
         state = SnowballState.new()
         result = SnowballEngine(config).process_tick(
             tick=TickFactory.tick_at(0, bid="150.00", ask="150.02"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
 
         assert [type(event) for event in result.events] == [
@@ -180,14 +189,12 @@ class TestSnowballEngine:
         engine.process_tick(
             tick=first_tick,
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
         fill_requested_entries(state, filled_at=first_tick.timestamp)
 
         result = engine.process_tick(
             tick=TickFactory.tick_at(1, bid="149.70", ask="149.72"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
 
         layer = result.state.cycles[0].grid.layers[0]
@@ -207,14 +214,12 @@ class TestSnowballEngine:
         engine.process_tick(
             tick=first_tick,
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
         fill_requested_entries(state, filled_at=first_tick.timestamp)
 
         result = engine.process_tick(
             tick=TickFactory.tick_at(1, bid="150.52", ask="150.54"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
 
         close_event = result.events[0]
@@ -242,14 +247,12 @@ class TestSnowballEngine:
         engine.process_tick(
             tick=first_tick,
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
         fill_requested_entries(state, filled_at=first_tick.timestamp)
 
         stopped = engine.process_tick(
             tick=TickFactory.tick_at(1, bid="149.90", ask="149.92"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
         pending_slot = stopped.state.cycles[0].grid.layers[0].r0
 
@@ -282,7 +285,6 @@ class TestSnowballEngine:
         rebuilt = engine.process_tick(
             tick=TickFactory.tick_at(2, bid="150.01", ask="150.03"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
 
         rebuilt_layer = rebuilt.state.cycles[0].grid.layers[0]
@@ -348,7 +350,6 @@ class TestSnowballStateSerialization:
         result = SnowballEngine(config).process_tick(
             tick=TickFactory.tick_at(0, bid="150.00", ask="150.02"),
             state=state,
-            pip_size=USD_JPY.pip_size,
         )
 
         strategy_state = result.state.to_strategy_state()
