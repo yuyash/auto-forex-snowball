@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core import Metadata, Money, Tick
+from core import Metadata, Money, PositionSide, Tick
 
 from snowball.config import SnowballConfig
-from snowball.enums import CloseReason, CounterTakeProfitMode, EntryRole
+from snowball.enums import CloseReason, CounterTakeProfitMode, EntryRole, RebuildEntryPriceMode
 from snowball.events import (
     SnowballCloseEvent,
     SnowballEvent,
@@ -155,11 +155,10 @@ class SnowballCloseService:
                     exit_price=exit_price,
                 )
                 rebuild_trigger_price = (
-                    self.pricing.rebuild_trigger_price(
+                    self._rebuild_trigger_price(
                         direction=cycle.direction,
                         original_entry_price=entry.filled_entry_price,
                         stop_loss_exit_price=exit_price,
-                        config=self.config,
                         pip_size=pip_size,
                     )
                     if self.config.rebuild.enabled
@@ -297,6 +296,28 @@ class SnowballCloseService:
         if layer.retracement_count(slot) < protected_from:
             return False
         return highest is slot
+
+    def _rebuild_trigger_price(
+        self,
+        *,
+        direction: PositionSide,
+        original_entry_price: Money,
+        stop_loss_exit_price: Money,
+        pip_size: Decimal,
+    ) -> Money:
+        if (
+            self.config.rebuild.trigger.entry_price_mode
+            == RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
+        ):
+            trigger = stop_loss_exit_price
+        else:
+            trigger = original_entry_price
+        return self.pricing.directional_buffer_price(
+            direction=direction,
+            price=trigger,
+            buffer_pips=self.config.rebuild.trigger.buffer_pips,
+            pip_size=pip_size,
+        )
 
     def _shrink_target(
         self,

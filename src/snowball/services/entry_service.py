@@ -8,7 +8,12 @@ from decimal import Decimal
 from core import Money, PositionSide, Tick
 
 from snowball.config import SnowballConfig
-from snowball.enums import CounterTakeProfitMode, EntryRole
+from snowball.enums import (
+    CounterTakeProfitMode,
+    EntryRole,
+    RebuildStopLossMode,
+    RebuildTakeProfitMode,
+)
 from snowball.models.entries import FilledEntry, FilledStopLossEntry, RequestedEntry
 from snowball.models.grid import Grid, Layer, Slot
 from snowball.models.identifiers import EntryId
@@ -49,24 +54,22 @@ class SnowballEntryService:
                 layer=layer,
                 cycle_head=weighted_average_head,
             )
-            take_profit_price = self.pricing.counter_take_profit_price(
+            take_profit_price = self._counter_take_profit_price(
                 layer=layer,
                 direction=direction,
                 retracement_count=retracement_count,
                 entry_price=entry_price,
                 units=units,
                 pip_size=pip_size,
-                calculator=self.calculator,
                 include_head=include_head,
             )
         elif rebuild_source is not None:
-            take_profit_price = self.pricing.rebuild_take_profit_price(
+            take_profit_price = self._rebuild_take_profit_price(
                 stop_loss_entry=rebuild_source,
                 direction=direction,
                 retracement_count=retracement_count,
                 entry_price=entry_price,
                 pip_size=pip_size,
-                calculator=self.calculator,
             )
         else:
             take_profit_price = self.pricing.take_profit_price(
@@ -139,13 +142,12 @@ class SnowballEntryService:
         if not self.config.stop_loss.enabled:
             return None
         if rebuild_source is not None:
-            return self.pricing.rebuild_stop_loss_price(
+            return self._rebuild_stop_loss_price(
                 stop_loss_entry=rebuild_source,
                 direction=direction,
                 retracement_count=retracement_count,
                 entry_price=entry_price,
                 pip_size=pip_size,
-                calculator=self.calculator,
             )
         stop_loss_pips = self.calculator.stop_loss_pips(retracement_count + 1)
         return self.pricing.stop_loss_price(
@@ -154,6 +156,101 @@ class SnowballEntryService:
             stop_loss_pips=stop_loss_pips,
             pip_size=pip_size,
         )
+
+    def _counter_take_profit_price(
+        self,
+        *,
+        layer: Layer,
+        direction: PositionSide,
+        retracement_count: int,
+        entry_price: Money,
+        units: Decimal,
+        pip_size: Decimal,
+        include_head: FilledEntry | None,
+    ) -> Money:
+        if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
+            return self.pricing.weighted_average_price(
+                layer=layer,
+                new_price=entry_price,
+                new_units=units,
+                include_ref=include_head,
+            )
+        tp_pips = self.calculator.counter_take_profit_pips(retracement_count)
+        return self.pricing.take_profit_price(
+            direction=direction,
+            entry_price=entry_price,
+            tp_pips=tp_pips,
+            pip_size=pip_size,
+        )
+
+    def _rebuild_take_profit_price(
+        self,
+        *,
+        stop_loss_entry: FilledStopLossEntry,
+        direction: PositionSide,
+        retracement_count: int,
+        entry_price: Money,
+        pip_size: Decimal,
+    ) -> Money:
+        mode = self.config.rebuild.take_profit.mode
+        if mode == RebuildTakeProfitMode.SAME_PRICE:
+            return stop_loss_entry.planned_take_profit_price
+        if mode == RebuildTakeProfitMode.SAME_DISTANCE:
+            tp_pips = self.pricing.absolute_pips_between(
+                first_price=stop_loss_entry.planned_take_profit_price,
+                second_price=stop_loss_entry.original_filled_entry_price,
+                pip_size=pip_size,
+            )
+        else:
+            tp_pips = self.calculator.rebuild_take_profit_pips(retracement_count + 1)
+        return self.pricing.take_profit_price(
+            direction=direction,
+            entry_price=entry_price,
+            tp_pips=tp_pips,
+            pip_size=pip_size,
+        )
+
+    def _rebuild_stop_loss_price(
+        self,
+        *,
+        stop_loss_entry: FilledStopLossEntry,
+        direction: PositionSide,
+        retracement_count: int,
+        entry_price: Money,
+        pip_size: Decimal,
+    ) -> Money | None:
+        mode = self.config.rebuild.stop_loss.mode
+        if mode == RebuildStopLossMode.SAME_PRICE:
+            copied = stop_loss_entry.planned_stop_loss_price
+            if self.pricing.stop_loss_on_loss_side(
+                direction=direction,
+                entry_price=entry_price,
+                stop_loss_price=copied,
+            ):
+                return copied
+            return self.pricing.reproject_stop_loss(
+                direction=direction,
+                entry_price=entry_price,
+                source_entry_price=stop_loss_entry.original_filled_entry_price,
+                source_stop_loss_price=stop_loss_entry.planned_stop_loss_price,
+            )
+        if mode == RebuildStopLossMode.SAME_DISTANCE:
+            return self.pricing.reproject_stop_loss(
+                direction=direction,
+                entry_price=entry_price,
+                source_entry_price=stop_loss_entry.original_filled_entry_price,
+                source_stop_loss_price=stop_loss_entry.planned_stop_loss_price,
+            )
+        if mode == RebuildStopLossMode.MANUAL_DISTANCE:
+            values = self.config.rebuild.stop_loss.manual_distances_pips
+            pips = values[min(retracement_count, len(values) - 1)]
+            return self.pricing.stop_loss_price(
+                direction=direction,
+                entry_price=entry_price,
+                stop_loss_pips=pips,
+                pip_size=pip_size,
+            )
+        return None
 
     def _entry_units(
         self,

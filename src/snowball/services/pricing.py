@@ -7,16 +7,8 @@ from decimal import Decimal
 
 from core import Money, PositionSide, Tick
 
-from snowball.config import SnowballConfig
-from snowball.enums import (
-    CounterTakeProfitMode,
-    RebuildEntryPriceMode,
-    RebuildStopLossMode,
-    RebuildTakeProfitMode,
-)
 from snowball.models.entries import FilledEntry, FilledStopLossEntry
 from snowball.models.grid import Layer
-from snowball.services.calculators import SnowballCalculator
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +52,31 @@ class SnowballPricing:
         else:
             amount = entry_price.amount + stop_loss_pips * pip_size
         return Money.of(amount, entry_price.currency)
+
+    def directional_buffer_price(
+        self,
+        *,
+        direction: PositionSide,
+        price: Money,
+        buffer_pips: Decimal,
+        pip_size: Decimal,
+    ) -> Money:
+        """Return a price moved by a directional positive buffer."""
+        if not buffer_pips:
+            return price
+        buffer = buffer_pips * pip_size
+        amount = price.amount + buffer if direction == PositionSide.LONG else price.amount - buffer
+        return Money.of(amount, price.currency)
+
+    def absolute_pips_between(
+        self,
+        *,
+        first_price: Money,
+        second_price: Money,
+        pip_size: Decimal,
+    ) -> Decimal:
+        """Return the absolute distance between two prices in pips."""
+        return abs(first_price.amount - second_price.amount) / pip_size
 
     def adverse_pips(
         self,
@@ -152,35 +169,6 @@ class SnowballPricing:
             amount = (entry.filled_entry_price.amount - exit_price.amount) * entry.filled_units
         return Money.of(amount, entry.filled_entry_price.currency)
 
-    def counter_take_profit_price(
-        self,
-        *,
-        layer: Layer,
-        direction: PositionSide,
-        retracement_count: int,
-        entry_price: Money,
-        units: Decimal,
-        pip_size: Decimal,
-        calculator: SnowballCalculator,
-        include_head: FilledEntry | None = None,
-    ) -> Money:
-        """Return the TP price for a new counter entry."""
-        config = calculator.config
-        if config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
-            return self.weighted_average_price(
-                layer=layer,
-                new_price=entry_price,
-                new_units=units,
-                include_ref=include_head,
-            )
-        tp_pips = calculator.counter_take_profit_pips(retracement_count)
-        return self.take_profit_price(
-            direction=direction,
-            entry_price=entry_price,
-            tp_pips=tp_pips,
-            pip_size=pip_size,
-        )
-
     def weighted_average_price(
         self,
         *,
@@ -258,84 +246,6 @@ class SnowballPricing:
             return min(planned_take_profit_price, previous_tp)
         return max(planned_take_profit_price, previous_tp)
 
-    def rebuild_take_profit_price(
-        self,
-        *,
-        stop_loss_entry: FilledStopLossEntry,
-        direction: PositionSide,
-        retracement_count: int,
-        entry_price: Money,
-        pip_size: Decimal,
-        calculator: SnowballCalculator,
-    ) -> Money:
-        """Return TP price for a rebuilt entry."""
-        config = calculator.config
-        if config.rebuild.take_profit.mode == RebuildTakeProfitMode.SAME_PRICE:
-            return stop_loss_entry.planned_take_profit_price
-        if config.rebuild.take_profit.mode == RebuildTakeProfitMode.SAME_DISTANCE:
-            tp_pips = (
-                abs(
-                    stop_loss_entry.planned_take_profit_price.amount
-                    - stop_loss_entry.original_filled_entry_price.amount
-                )
-                / pip_size
-            )
-        else:
-            tp_pips = calculator.rebuild_take_profit_pips(retracement_count + 1)
-        return self.take_profit_price(
-            direction=direction,
-            entry_price=entry_price,
-            tp_pips=tp_pips,
-            pip_size=pip_size,
-        )
-
-    def rebuild_stop_loss_price(
-        self,
-        *,
-        stop_loss_entry: FilledStopLossEntry,
-        direction: PositionSide,
-        retracement_count: int,
-        entry_price: Money,
-        pip_size: Decimal,
-        calculator: SnowballCalculator,
-    ) -> Money | None:
-        """Return SL price for a rebuilt entry."""
-        config = calculator.config
-        if not config.stop_loss.enabled:
-            return None
-        mode = config.rebuild.stop_loss.mode
-        if mode == RebuildStopLossMode.SAME_PRICE:
-            copied = stop_loss_entry.planned_stop_loss_price
-            if self.stop_loss_on_loss_side(
-                direction=direction,
-                entry_price=entry_price,
-                stop_loss_price=copied,
-            ):
-                return copied
-            return self.reproject_stop_loss(
-                direction=direction,
-                entry_price=entry_price,
-                source_entry_price=stop_loss_entry.original_filled_entry_price,
-                source_stop_loss_price=stop_loss_entry.planned_stop_loss_price,
-            )
-        if mode == RebuildStopLossMode.SAME_DISTANCE:
-            return self.reproject_stop_loss(
-                direction=direction,
-                entry_price=entry_price,
-                source_entry_price=stop_loss_entry.original_filled_entry_price,
-                source_stop_loss_price=stop_loss_entry.planned_stop_loss_price,
-            )
-        if mode == RebuildStopLossMode.MANUAL_DISTANCE:
-            values = config.rebuild.stop_loss.manual_distances_pips
-            pips = values[min(retracement_count, len(values) - 1)]
-            return self.stop_loss_price(
-                direction=direction,
-                entry_price=entry_price,
-                stop_loss_pips=pips,
-                pip_size=pip_size,
-            )
-        return None
-
     def stop_loss_on_loss_side(
         self,
         *,
@@ -382,25 +292,3 @@ class SnowballPricing:
         if direction == PositionSide.LONG:
             return tick.ask >= trigger
         return tick.bid <= trigger
-
-    def rebuild_trigger_price(
-        self,
-        *,
-        direction: PositionSide,
-        original_entry_price: Money,
-        stop_loss_exit_price: Money,
-        config: SnowballConfig,
-        pip_size: Decimal,
-    ) -> Money:
-        """Return the price that must be revisited before rebuilding a stopped slot."""
-        if config.rebuild.trigger.entry_price_mode == RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE:
-            trigger = stop_loss_exit_price
-        else:
-            trigger = original_entry_price
-        if not config.rebuild.trigger.buffer_pips:
-            return trigger
-        buffer = config.rebuild.trigger.buffer_pips * pip_size
-        amount = (
-            trigger.amount + buffer if direction == PositionSide.LONG else trigger.amount - buffer
-        )
-        return Money.of(amount, trigger.currency)
