@@ -18,6 +18,7 @@ from snowball.models.entries import (
     SealedEntry,
 )
 from snowball.models.identifiers import CycleId, EntryId, IntegerIdGenerator
+from snowball.models.position import GridPosition
 
 type Entry = (
     RequestedEntry | FilledEntry | RequestedStopLossEntry | FilledStopLossEntry | SealedEntry
@@ -29,6 +30,10 @@ class Slot:
     """One retracement slot within a layer."""
 
     entry: Entry | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.entry, FilledStopLossEntry):
+            self.entry.original_entry.record_stop_loss(self.entry)
 
     @property
     def requested_entry(self) -> RequestedEntry | None:
@@ -147,6 +152,8 @@ class Slot:
             rebuildable=rebuildable,
             planned_rebuild_trigger_price=planned_rebuild_trigger_price,
         )
+        if isinstance(self.entry, FilledStopLossEntry):
+            requested.original_entry.record_stop_loss(self.entry)
         return requested.original_entry
 
     def complete_rebuild(self, entry: RequestedEntry | FilledEntry) -> None:
@@ -275,6 +282,11 @@ class Layer:
         """Return the layer's slots in ascending R order (read-only view)."""
         return tuple(self._slots[slot_number] for slot_number in sorted(self._slots))
 
+    @property
+    def slot_numbers(self) -> tuple[int, ...]:
+        """Return slot numbers in ascending R order."""
+        return tuple(sorted(self._slots))
+
     def slot(self, slot_number: int) -> Slot:
         """Return one retracement slot."""
         return self._slots[slot_number]
@@ -355,35 +367,6 @@ class Layer:
                 return slot
         return None
 
-    def next_available_counter_slot(
-        self,
-        *,
-        max_refillable_retracement: int,
-    ) -> Slot | None:
-        """Return the next R1+ slot that can receive a counter entry.
-
-        Lower refillable slots are not reused while any higher R slot is present.
-        This preserves the Snowball grid progression.
-        """
-        slot_numbers = sorted(slot_number for slot_number in self._slots if slot_number > 0)
-        for retracement_count in slot_numbers:
-            slot = self._slots[retracement_count]
-            if slot.is_sealed:
-                return None
-            if slot.entry is not None:
-                continue
-            if retracement_count > max_refillable_retracement and self.build_count(slot) > 0:
-                return None
-            higher_present = any(
-                self._slots[higher_number].is_present
-                for higher_number in slot_numbers
-                if higher_number > retracement_count
-            )
-            if higher_present and self.build_count(slot) > 0:
-                continue
-            return slot
-        return None
-
     def is_empty(self) -> bool:
         """Return True when the layer has no slot entries."""
         return not any(slot.is_present for slot in self.slots)
@@ -446,11 +429,10 @@ class Grid:
 
     def role_for(self, layer: Layer, slot: Slot) -> EntryRole:
         """Return the entry role derived from layer and slot positions."""
-        if layer.retracement_count(slot) > 0:
-            return EntryRole.COUNTER
-        if self.layer_number(layer) == 1:
-            return EntryRole.INITIAL
-        return EntryRole.LAYER_INITIAL
+        return GridPosition(
+            layer_number=self.layer_number(layer),
+            slot_number=layer.slot_number(slot),
+        ).role
 
     def all_live_entries(self) -> list[FilledEntry]:
         """Return all live entries in grid order."""
@@ -503,19 +485,6 @@ class Grid:
         entries = self.all_live_entries()
         return entries[0] if entries else None
 
-    def effective_head(self) -> FilledEntry | None:
-        """Return the live head entry, falling back to retained original entries."""
-        head = self.head_entry()
-        if head is not None:
-            return head
-        for _layer, slot in self.requested_stop_loss_slots():
-            if slot.requested_stop_loss_entry is not None:
-                return slot.requested_stop_loss_entry.original_entry
-        for _layer, slot in self.filled_stop_loss_slots():
-            if slot.filled_stop_loss_entry is not None:
-                return slot.filled_stop_loss_entry.original_entry
-        return None
-
     def tail_present_slot(self) -> tuple[Layer, Slot] | None:
         """Return the highest L/R slot with any entry."""
         present = self.all_present_slots()
@@ -544,10 +513,6 @@ class Grid:
             if not self._layers[top_layer_number].is_empty():
                 return
             del self._layers[top_layer_number]
-
-    def shrink_front_entry(self) -> FilledEntry | None:
-        """Return the lowest L/R live entry eligible as a shrink candidate."""
-        return self.head_entry()
 
     def next_entry_id(self, *, cycle_id: CycleId, layer: Layer, slot: Slot) -> EntryId:
         """Return the next entry identifier for one slot."""

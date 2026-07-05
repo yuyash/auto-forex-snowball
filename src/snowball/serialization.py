@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from core import Money, PositionSide
+from core import Money, PositionSide, StrategyState
 
 from snowball.enums import CycleStatus
 from snowball.models.entries import (
@@ -20,6 +20,8 @@ from snowball.models.entries import (
 from snowball.models.grid import Grid, Layer, Slot
 from snowball.models.identifiers import EntryId, EntryIdType
 from snowball.models.state import Cycle, SnowballState
+
+STATE_KEY = "snowball"
 
 
 class SnowballStateSerializer:
@@ -40,6 +42,18 @@ class SnowballStateSerializer:
         if "next_cycle_id" in data:
             state.restore_next_cycle_id(int(data["next_cycle_id"]))
         return state
+
+    @classmethod
+    def to_strategy_state(cls, state: SnowballState) -> StrategyState:
+        """Serialize Snowball state to Core StrategyState."""
+        return StrategyState.of(**{STATE_KEY: cls.to_mapping(state)})
+
+    @classmethod
+    def from_strategy_state(cls, state: StrategyState) -> SnowballState:
+        """Deserialize Snowball state from Core StrategyState."""
+        if STATE_KEY not in state:
+            return SnowballState.new()
+        return cls.from_mapping(state.require(STATE_KEY))
 
     @classmethod
     def _cycle_to_mapping(cls, cycle: Cycle) -> dict[str, Any]:

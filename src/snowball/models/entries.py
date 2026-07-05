@@ -124,6 +124,13 @@ class FilledEntry:
             sealed_at=sealed_at,
         )
 
+    def record_stop_loss(self, stop_loss_entry: FilledStopLossEntry) -> None:
+        """Record the filled stop-loss close for this entry."""
+        existing = self.filled_stop_loss_entry
+        if existing is not None and existing is not stop_loss_entry:
+            raise ValueError("original entry already has a filled stop-loss entry")
+        self.filled_stop_loss_entry = stop_loss_entry
+
 
 @dataclass(slots=True)
 class RequestedStopLossEntry:
@@ -206,10 +213,6 @@ class FilledStopLossEntry:
 
     def __post_init__(self) -> None:
         self.entry_id = self.entry_id.with_type(EntryIdType.FILLED_STOP_LOSS_ENTRY)
-        existing = self.original_entry.filled_stop_loss_entry
-        if existing is not None and existing is not self:
-            raise ValueError("original entry already has a filled stop-loss entry")
-        self.original_entry.filled_stop_loss_entry = self
 
     @property
     def original_entry(self) -> FilledEntry:

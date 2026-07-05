@@ -3,13 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from enum import StrEnum
 from typing import Any, Self
 
 from core import Currency, Money, StrategyParameters
 
+from snowball.config_parsing import (
+    bool_value,
+    decimal_tuple,
+    decimal_value,
+    enum_value,
+    int_value,
+    money_value,
+    nested,
+    require_manual_length,
+    require_positive,
+)
+from snowball.config_parsing import (
+    changes as parse_changes,
+)
+from snowball.config_serialization import serialize_config
 from snowball.enums import (
     CounterTakeProfitMode,
     IntervalMode,
@@ -41,28 +55,28 @@ class PipProgressionConfig:
         config = default or cls()
         if not values:
             return config
-        changes = _changes(
+        changes = parse_changes(
             values,
-            mode=lambda value: _enum(IntervalMode, value),
-            head_pips=_decimal,
-            tail_pips=_decimal,
-            flat_steps=_int,
-            gamma=_decimal,
-            manual_pips=_decimal_tuple,
+            mode=lambda value: enum_value(IntervalMode, value),
+            head_pips=decimal_value,
+            tail_pips=decimal_value,
+            flat_steps=int_value,
+            gamma=decimal_value,
+            manual_pips=decimal_tuple,
         )
         return replace(config, **changes)
 
     def validate(self, *, manual_minimum: int | None = None, name: str) -> None:
         """Validate this progression."""
-        _require_positive(self.head_pips, f"{name}.head_pips")
-        _require_positive(self.tail_pips, f"{name}.tail_pips")
-        _require_positive(self.gamma, f"{name}.gamma")
+        require_positive(self.head_pips, f"{name}.head_pips")
+        require_positive(self.tail_pips, f"{name}.tail_pips")
+        require_positive(self.gamma, f"{name}.gamma")
         if self.flat_steps < 0:
             raise ValueError(f"{name}.flat_steps must not be negative")
         if self.mode == IntervalMode.MANUAL:
             if manual_minimum is None:
                 raise ValueError(f"{name}.manual_pips minimum length is not configured")
-            _require_manual_length(self.manual_pips, manual_minimum, f"{name}.manual_pips")
+            require_manual_length(self.manual_pips, manual_minimum, f"{name}.manual_pips")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,22 +95,22 @@ class PositionSizingConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                base_units=_decimal,
-                initial_entry_units_multiplier=_decimal,
-                additional_layer_base_units_multiplier=_decimal,
+                base_units=decimal_value,
+                initial_entry_units_multiplier=decimal_value,
+                additional_layer_base_units_multiplier=decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate sizing values."""
-        _require_positive(self.base_units, "sizing.base_units")
-        _require_positive(
+        require_positive(self.base_units, "sizing.base_units")
+        require_positive(
             self.initial_entry_units_multiplier,
             "sizing.initial_entry_units_multiplier",
         )
-        _require_positive(
+        require_positive(
             self.additional_layer_base_units_multiplier,
             "sizing.additional_layer_base_units_multiplier",
         )
@@ -128,10 +142,10 @@ class SlotRefillConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                enabled=_bool,
-                max_reusable_retracement=_int,
+                enabled=bool_value,
+                max_reusable_retracement=int_value,
             ),
         )
 
@@ -152,10 +166,10 @@ class GridConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                max_retracements_per_layer=_int,
-                max_layers=_int,
+                max_retracements_per_layer=int_value,
+                max_layers=int_value,
                 refill=SlotRefillConfig.from_mapping,
             ),
         )
@@ -199,17 +213,17 @@ class CycleConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                take_profit_pips=_decimal,
-                hedging_enabled=_bool,
-                reseed_when_all_positions_pending_rebuild=_bool,
+                take_profit_pips=decimal_value,
+                hedging_enabled=bool_value,
+                reseed_when_all_positions_pending_rebuild=bool_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate cycle values."""
-        _require_positive(self.take_profit_pips, "cycle.take_profit_pips")
+        require_positive(self.take_profit_pips, "cycle.take_profit_pips")
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,20 +246,20 @@ class CounterTakeProfitConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                mode=lambda value: _enum(CounterTakeProfitMode, value),
-                fixed_pips=_decimal,
-                step_pips=_decimal,
-                multiplier=_decimal,
+                mode=lambda value: enum_value(CounterTakeProfitMode, value),
+                fixed_pips=decimal_value,
+                step_pips=decimal_value,
+                multiplier=decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate counter take-profit values."""
-        _require_positive(self.fixed_pips, "counter.take_profit.fixed_pips")
-        _require_positive(self.step_pips, "counter.take_profit.step_pips")
-        _require_positive(self.multiplier, "counter.take_profit.multiplier")
+        require_positive(self.fixed_pips, "counter.take_profit.fixed_pips")
+        require_positive(self.step_pips, "counter.take_profit.step_pips")
+        require_positive(self.multiplier, "counter.take_profit.multiplier")
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +277,7 @@ class CounterConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
                 interval=PipProgressionConfig.from_mapping,
                 take_profit=CounterTakeProfitConfig.from_mapping,
@@ -294,10 +308,10 @@ class StopLossProtectionConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                enabled=_bool,
-                from_retracement=_int,
+                enabled=bool_value,
+                from_retracement=int_value,
             ),
         )
 
@@ -323,9 +337,9 @@ class StopLossConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                enabled=_bool,
+                enabled=bool_value,
                 distance=lambda value: PipProgressionConfig.from_mapping(
                     value,
                     default=config.distance,
@@ -359,10 +373,10 @@ class RebuildTriggerConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                entry_price_mode=lambda value: _enum(RebuildEntryPriceMode, value),
-                buffer_pips=_decimal,
+                entry_price_mode=lambda value: enum_value(RebuildEntryPriceMode, value),
+                buffer_pips=decimal_value,
             ),
         )
 
@@ -382,17 +396,17 @@ class RebuildStopLossConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                mode=lambda value: _enum(RebuildStopLossMode, value),
-                manual_distances_pips=_decimal_tuple,
+                mode=lambda value: enum_value(RebuildStopLossMode, value),
+                manual_distances_pips=decimal_tuple,
             ),
         )
 
     def validate(self, *, max_retracements_per_layer: int) -> None:
         """Validate rebuild stop-loss config."""
         if self.mode == RebuildStopLossMode.MANUAL_DISTANCE:
-            _require_manual_length(
+            require_manual_length(
                 self.manual_distances_pips,
                 max_retracements_per_layer + 1,
                 "rebuild.stop_loss.manual_distances_pips",
@@ -419,9 +433,9 @@ class RebuildTakeProfitConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                mode=lambda value: _enum(RebuildTakeProfitMode, value),
+                mode=lambda value: enum_value(RebuildTakeProfitMode, value),
                 distance=lambda value: PipProgressionConfig.from_mapping(
                     value,
                     default=config.distance,
@@ -455,9 +469,9 @@ class RebuildConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                enabled=_bool,
+                enabled=bool_value,
                 trigger=RebuildTriggerConfig.from_mapping,
                 stop_loss=RebuildStopLossConfig.from_mapping,
                 take_profit=RebuildTakeProfitConfig.from_mapping,
@@ -490,13 +504,13 @@ class ProtectionConfig:
             return config
         return replace(
             config,
-            **_changes(
+            **parse_changes(
                 values,
-                shrink_enabled=_bool,
-                shrink_start_margin_percent=_decimal,
-                shrink_target_margin_percent=_decimal,
-                emergency_enabled=_bool,
-                emergency_margin_percent=_decimal,
+                shrink_enabled=bool_value,
+                shrink_start_margin_percent=decimal_value,
+                shrink_target_margin_percent=decimal_value,
+                emergency_enabled=bool_value,
+                emergency_margin_percent=decimal_value,
             ),
         )
 
@@ -533,7 +547,7 @@ class AccountValuationConfig:
             return config
         currency = Currency.of(values["currency"]) if "currency" in values else config.currency
         balance = (
-            _money(values["balance"], currency)
+            money_value(values["balance"], currency)
             if "balance" in values
             else Money.of(config.balance.amount, currency)
         )
@@ -541,18 +555,18 @@ class AccountValuationConfig:
             config,
             currency=currency,
             balance=balance,
-            **_changes(
+            **parse_changes(
                 values,
-                margin_rate=_decimal,
-                quote_to_account_rate=_decimal,
+                margin_rate=decimal_value,
+                quote_to_account_rate=decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate account valuation inputs."""
         self.balance.require_currency(self.currency).require_positive()
-        _require_positive(self.margin_rate, "account.margin_rate")
-        _require_positive(self.quote_to_account_rate, "account.quote_to_account_rate")
+        require_positive(self.margin_rate, "account.margin_rate")
+        require_positive(self.quote_to_account_rate, "account.quote_to_account_rate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -578,14 +592,14 @@ class SnowballConfig:
             return cls().validate()
         values = parameters.to_dict()
         config = cls(
-            sizing=PositionSizingConfig.from_mapping(_nested(values, "sizing")),
-            grid=GridConfig.from_mapping(_nested(values, "grid")),
-            cycle=CycleConfig.from_mapping(_nested(values, "cycle")),
-            counter=CounterConfig.from_mapping(_nested(values, "counter")),
-            stop_loss=StopLossConfig.from_mapping(_nested(values, "stop_loss")),
-            rebuild=RebuildConfig.from_mapping(_nested(values, "rebuild")),
-            protection=ProtectionConfig.from_mapping(_nested(values, "protection")),
-            account=AccountValuationConfig.from_mapping(_nested(values, "account")),
+            sizing=PositionSizingConfig.from_mapping(nested(values, "sizing")),
+            grid=GridConfig.from_mapping(nested(values, "grid")),
+            cycle=CycleConfig.from_mapping(nested(values, "cycle")),
+            counter=CounterConfig.from_mapping(nested(values, "counter")),
+            stop_loss=StopLossConfig.from_mapping(nested(values, "stop_loss")),
+            rebuild=RebuildConfig.from_mapping(nested(values, "rebuild")),
+            protection=ProtectionConfig.from_mapping(nested(values, "protection")),
+            account=AccountValuationConfig.from_mapping(nested(values, "account")),
         )
         return config.validate()
 
@@ -611,81 +625,4 @@ class SnowballConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Return nested normalized values suitable for StrategyParameters."""
-        return _serialize(asdict(self))
-
-
-def _nested(values: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    value = values.get(key)
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{key} must be an object")
-    return value
-
-
-def _changes(values: Mapping[str, Any], **parsers: Any) -> dict[str, Any]:
-    return {key: parser(values[key]) for key, parser in parsers.items() if key in values}
-
-
-def _decimal(value: Any) -> Decimal:
-    return Decimal(str(value))
-
-
-def _money(value: Any, currency: Currency) -> Money:
-    return Money.coerce(value, currency).require_positive()
-
-
-def _int(value: Any) -> int:
-    return int(value)
-
-
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-def _decimal_tuple(value: Any) -> tuple[Decimal, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list | tuple):
-        raise ValueError("manual pip values must be a sequence")
-    return tuple(_decimal(item) for item in value)
-
-
-def _enum[EnumT: StrEnum](enum_type: type[EnumT], value: Any) -> EnumT:
-    if isinstance(value, enum_type):
-        return value
-    return enum_type(str(value))
-
-
-def _require_positive(value: Decimal, field_name: str) -> None:
-    if value <= 0:
-        raise ValueError(f"{field_name} must be greater than 0")
-
-
-def _require_manual_length(values: tuple[Decimal, ...], minimum: int, field_name: str) -> None:
-    if len(values) < minimum:
-        raise ValueError(f"{field_name} must contain at least {minimum} values")
-    for value in values:
-        _require_positive(value, field_name)
-
-
-def _serialize(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return value
-    if isinstance(value, Currency):
-        return value.code
-    if isinstance(value, Money):
-        return {"amount": value.amount, "currency": value.currency.code}
-    if isinstance(value, StrEnum):
-        return value.value
-    if is_dataclass(value):
-        return _serialize(asdict(value))
-    if isinstance(value, Mapping):
-        return {key: _serialize(item) for key, item in value.items()}
-    if isinstance(value, tuple | list):
-        return [_serialize(item) for item in value]
-    return value
+        return serialize_config(self)

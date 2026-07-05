@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from core import Metadata, Money, PositionSide, Tick
 
 from snowball.config import SnowballConfig
-from snowball.enums import CounterTakeProfitMode
 from snowball.events import SnowballEvent, SnowballOpenEvent
-from snowball.models.entries import FilledEntry, RequestedEntry
+from snowball.models.entries import FilledEntry
 from snowball.models.grid import Layer, Slot
 from snowball.models.state import Cycle
 from snowball.services.calculators import SnowballCalculator
-from snowball.services.entry_service import SnowballEntryService
-from snowball.services.pricing import SnowballPricing
+from snowball.services.flows.entry import SnowballEntryService
+from snowball.services.flows.event_factory import SnowballEventFactory
+from snowball.services.market_pricing import SnowballMarketPricing
+from snowball.services.policies.take_profit import SnowballTakeProfitPlanner
+from snowball.services.selectors.grid import SnowballGridSelector
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,8 +25,11 @@ class SnowballCounterService:
 
     config: SnowballConfig
     calculator: SnowballCalculator
-    pricing: SnowballPricing
+    pricing: SnowballMarketPricing
     entry_service: SnowballEntryService
+    grid_selector: SnowballGridSelector
+    take_profit_planner: SnowballTakeProfitPlanner
+    event_factory: SnowballEventFactory
 
     def process_counter_adds(
         self,
@@ -51,7 +56,7 @@ class SnowballCounterService:
         cycle: Cycle,
         tick: Tick,
     ) -> SnowballEvent | None:
-        head = cycle.effective_head()
+        head = self.grid_selector.effective_head(cycle)
         if head is None:
             return None
         current_entry_price = self.pricing.entry_side_price(cycle.direction, tick)
@@ -63,8 +68,9 @@ class SnowballCounterService:
             return None
 
         layer = cycle.grid.current_layer
-        slot = layer.next_available_counter_slot(
-            max_refillable_retracement=self.config.grid.max_refillable_counter_retracement
+        slot = self.grid_selector.next_available_counter_slot(
+            layer=layer,
+            max_refillable_retracement=self.config.grid.max_refillable_counter_retracement,
         )
         if slot is not None:
             return self._try_open_counter(
@@ -91,7 +97,7 @@ class SnowballCounterService:
         slot: Slot,
         current_entry_price: Money,
     ) -> SnowballOpenEvent | None:
-        reference = self._counter_reference_price(
+        reference = self.grid_selector.counter_reference_price(
             layer=layer, retracement_count=layer.retracement_count(slot)
         )
         if reference is None:
@@ -106,7 +112,7 @@ class SnowballCounterService:
         interval = self.calculator.counter_interval_pips(layer.retracement_count(slot))
         if adverse < interval:
             return None
-        entry = self.entry_service.create_entry(
+        entry = self.entry_service.create_counter_entry(
             entry_id=cycle.next_entry_id(layer=layer, slot=slot),
             tick=tick,
             direction=cycle.direction,
@@ -116,10 +122,9 @@ class SnowballCounterService:
             weighted_average_head=cycle.head(),
         )
         slot.place_entry(entry)
-        if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
-            self.pricing.sync_weighted_average_take_profits(layer)
+        self.take_profit_planner.sync_weighted_average_take_profits(layer)
         cycle.refresh_status()
-        return self._open_event(
+        return self.event_factory.open_event(
             cycle=cycle,
             entry=entry,
             metadata=Metadata.of(
@@ -173,7 +178,7 @@ class SnowballCounterService:
         )
         slot.place_entry(requested_entry)
         cycle.refresh_status()
-        return self._open_event(
+        return self.event_factory.open_event(
             cycle=cycle,
             entry=requested_entry,
             metadata=Metadata.of(
@@ -181,18 +186,6 @@ class SnowballCounterService:
                 actual_interval_pips=str(adverse),
             ),
         )
-
-    def _counter_reference_price(
-        self,
-        *,
-        layer: Layer,
-        retracement_count: int,
-    ) -> Money | None:
-        for index in range(retracement_count - 1, -1, -1):
-            reference = layer.slot(index).reference_entry_price()
-            if reference is not None:
-                return reference
-        return None
 
     def _is_losing_reference(
         self,
@@ -204,17 +197,3 @@ class SnowballCounterService:
         if direction == PositionSide.LONG:
             return current_entry_price < reference.filled_entry_price
         return current_entry_price > reference.filled_entry_price
-
-    def _open_event(
-        self,
-        *,
-        cycle: Cycle,
-        entry: RequestedEntry,
-        metadata: Metadata | None = None,
-    ) -> SnowballOpenEvent:
-        return SnowballOpenEvent(
-            cycle_id=entry.entry_id.cycle_id,
-            direction=cycle.direction,
-            entry=entry,
-            metadata=metadata or Metadata(),
-        )

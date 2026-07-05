@@ -8,8 +8,9 @@ from core import StrategyContext, StrategyResult, Tick
 
 from snowball.config import SnowballConfig
 from snowball.engine import SnowballEngine
-from snowball.events import SnowballEventMapper
+from snowball.event_mapper import SnowballEventMapper
 from snowball.models.state import SnowballState
+from snowball.serialization import SnowballStateSerializer
 
 
 @dataclass(slots=True)
@@ -26,7 +27,7 @@ class SnowballRuntime:
     def start(self, context: StrategyContext) -> StrategyResult:
         """Initialize or restore strategy state at task start."""
         state = self._state_from_context(context)
-        return StrategyResult(state=state.to_strategy_state())
+        return StrategyResult(state=SnowballStateSerializer.to_strategy_state(state))
 
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         """Process a tick and map Snowball events to Core strategy events."""
@@ -36,7 +37,10 @@ class SnowballRuntime:
             self.event_mapper.to_strategy_event(event=event, tick=tick, context=context)
             for event in result.events
         )
-        return StrategyResult(events=events, state=result.state.to_strategy_state())
+        return StrategyResult(
+            events=events,
+            state=SnowballStateSerializer.to_strategy_state(result.state),
+        )
 
     def _state_from_context(self, context: StrategyContext) -> SnowballState:
-        return SnowballState.from_strategy_state(context.state)
+        return SnowballStateSerializer.from_strategy_state(context.state)

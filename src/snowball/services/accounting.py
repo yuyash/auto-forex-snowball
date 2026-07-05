@@ -9,7 +9,7 @@ from core import Money, Tick
 
 from snowball.config import SnowballConfig
 from snowball.models.state import SnowballState
-from snowball.services.pricing import SnowballPricing
+from snowball.services.market_pricing import SnowballMarketPricing
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +25,7 @@ class AccountSnapshot:
 class SnowballAccounting:
     """Compute NAV and margin ratio from Snowball state."""
 
-    pricing: SnowballPricing = field(default_factory=SnowballPricing)
+    pricing: SnowballMarketPricing = field(default_factory=SnowballMarketPricing)
 
     def evaluate(
         self,

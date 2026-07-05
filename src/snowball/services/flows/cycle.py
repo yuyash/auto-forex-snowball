@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core import Metadata, PositionSide, Tick
+from core import PositionSide, Tick
 
 from snowball.config import SnowballConfig
-from snowball.events import SnowballEvent, SnowballOpenEvent
-from snowball.models.entries import RequestedEntry
+from snowball.events import SnowballEvent
 from snowball.models.grid import Grid
 from snowball.models.state import Cycle, SnowballState
-from snowball.services.entry_service import SnowballEntryService
+from snowball.services.flows.entry import SnowballEntryService
+from snowball.services.flows.event_factory import SnowballEventFactory
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +20,7 @@ class SnowballCycleService:
 
     config: SnowballConfig
     entry_service: SnowballEntryService
+    event_factory: SnowballEventFactory
 
     def open_initial_cycles(
         self,
@@ -74,7 +75,7 @@ class SnowballCycleService:
         )
         layer = cycle.grid.current_layer
         slot = layer.r0
-        entry = self.entry_service.create_entry(
+        entry = self.entry_service.create_initial_entry(
             entry_id=cycle.next_entry_id(layer=layer, slot=slot),
             tick=tick,
             direction=direction,
@@ -85,7 +86,7 @@ class SnowballCycleService:
         slot.place_entry(entry)
         state.add_cycle(cycle)
         return [
-            self._open_event(
+            self.event_factory.open_event(
                 cycle=cycle,
                 entry=entry,
             )
@@ -96,18 +97,4 @@ class SnowballCycleService:
         return Grid.create(
             base_units=base_units,
             max_retracements=self.config.grid.max_retracements_per_layer,
-        )
-
-    def _open_event(
-        self,
-        *,
-        cycle: Cycle,
-        entry: RequestedEntry,
-        metadata: Metadata | None = None,
-    ) -> SnowballOpenEvent:
-        return SnowballOpenEvent(
-            cycle_id=entry.entry_id.cycle_id,
-            direction=cycle.direction,
-            entry=entry,
-            metadata=metadata or Metadata(),
         )

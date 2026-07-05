@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from core import Metadata, Tick
 
 from snowball.config import SnowballConfig
-from snowball.enums import CounterTakeProfitMode
-from snowball.events import SnowballEvent, SnowballOpenEvent
-from snowball.models.entries import RequestedEntry
+from snowball.events import SnowballEvent
 from snowball.models.state import Cycle
-from snowball.services.entry_service import SnowballEntryService
-from snowball.services.grid_policy import SnowballGridPolicy
-from snowball.services.pricing import SnowballPricing
+from snowball.services.flows.entry import SnowballEntryService
+from snowball.services.flows.event_factory import SnowballEventFactory
+from snowball.services.market_pricing import SnowballMarketPricing
+from snowball.services.policies.grid import SnowballGridPolicy
+from snowball.services.policies.take_profit import SnowballTakeProfitPlanner
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,9 +21,11 @@ class SnowballRebuildService:
     """Rebuild entries that are waiting after a stop-loss fill."""
 
     config: SnowballConfig
-    pricing: SnowballPricing
+    pricing: SnowballMarketPricing
     grid_policy: SnowballGridPolicy
     entry_service: SnowballEntryService
+    take_profit_planner: SnowballTakeProfitPlanner
+    event_factory: SnowballEventFactory
 
     def process_rebuilds(
         self,
@@ -52,7 +54,7 @@ class SnowballRebuildService:
                 retracement_count=layer.retracement_count(slot),
                 entry_price=raw_entry_price,
             )
-            entry = self.entry_service.create_entry(
+            entry = self.entry_service.create_rebuild_entry(
                 entry_id=cycle.next_entry_id(layer=layer, slot=slot),
                 tick=tick,
                 direction=cycle.direction,
@@ -60,7 +62,7 @@ class SnowballRebuildService:
                 layer=layer,
                 slot=slot,
                 rebuild_source=stop_loss_entry,
-                requested_entry_price=entry_price,
+                entry_price=entry_price,
             )
             entry.planned_take_profit_price = self.grid_policy.clamp_take_profit(
                 cycle=cycle,
@@ -75,10 +77,9 @@ class SnowballRebuildService:
                 take_profit_price=entry.planned_take_profit_price,
             )
             slot.complete_rebuild(entry)
-            if self.config.counter.take_profit.mode == CounterTakeProfitMode.WEIGHTED_AVG:
-                self.pricing.sync_weighted_average_take_profits(layer)
+            self.take_profit_planner.sync_weighted_average_take_profits(layer)
             events.append(
-                self._open_event(
+                self.event_factory.open_event(
                     cycle=cycle,
                     entry=entry,
                     metadata=Metadata.of(is_rebuild=True),
@@ -86,17 +87,3 @@ class SnowballRebuildService:
             )
         cycle.refresh_status()
         return events
-
-    def _open_event(
-        self,
-        *,
-        cycle: Cycle,
-        entry: RequestedEntry,
-        metadata: Metadata | None = None,
-    ) -> SnowballOpenEvent:
-        return SnowballOpenEvent(
-            cycle_id=entry.entry_id.cycle_id,
-            direction=cycle.direction,
-            entry=entry,
-            metadata=metadata or Metadata(),
-        )

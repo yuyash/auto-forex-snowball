@@ -1,4 +1,4 @@
-"""Price calculations for Snowball."""
+"""Market price calculations for Snowball."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ from decimal import Decimal
 from core import Money, PositionSide, Tick
 
 from snowball.models.entries import FilledEntry, FilledStopLossEntry
-from snowball.models.grid import Layer
 
 
 @dataclass(frozen=True, slots=True)
-class SnowballPricing:
-    """Own executable price, P/L, and TP/SL price calculations."""
+class SnowballMarketPricing:
+    """Own executable price, P/L, and TP/SL market calculations."""
 
     def entry_side_price(self, direction: PositionSide, tick: Tick) -> Money:
         """Return the executable entry-side price for a direction."""
@@ -168,83 +167,6 @@ class SnowballPricing:
         else:
             amount = (entry.filled_entry_price.amount - exit_price.amount) * entry.filled_units
         return Money.of(amount, entry.filled_entry_price.currency)
-
-    def weighted_average_price(
-        self,
-        *,
-        layer: Layer,
-        new_price: Money,
-        new_units: Decimal,
-        include_ref: FilledEntry | None = None,
-    ) -> Money:
-        """Compute weighted average of live/pending layer entries plus a new entry."""
-        total_cost = new_price.amount * new_units
-        total_units = new_units
-        for slot in layer.slots:
-            reference_price = slot.reference_entry_price()
-            reference_units = slot.reference_filled_units()
-            if reference_price is None or reference_units is None:
-                continue
-            total_cost += reference_price.amount * reference_units
-            total_units += reference_units
-        if include_ref is not None:
-            total_cost += include_ref.filled_entry_price.amount * include_ref.filled_units
-            total_units += include_ref.filled_units
-        return Money.of(total_cost / total_units, new_price.currency)
-
-    def sync_weighted_average_take_profits(self, layer: Layer) -> Money | None:
-        """Apply the current weighted average TP to present counter slots."""
-        total_cost = Decimal("0")
-        total_units = Decimal("0")
-        currency = None
-        for slot in layer.slots:
-            reference_price = slot.reference_entry_price()
-            reference_units = slot.reference_filled_units()
-            if reference_price is None or reference_units is None:
-                continue
-            currency = reference_price.currency
-            total_cost += reference_price.amount * reference_units
-            total_units += reference_units
-        if total_units <= 0 or currency is None:
-            return None
-        take_profit_price = Money.of(total_cost / total_units, currency)
-        for slot in layer.slots:
-            if layer.retracement_count(slot) <= 0:
-                continue
-            filled_entry = slot.filled_entry
-            if filled_entry is not None:
-                filled_entry.planned_take_profit_price = take_profit_price
-                continue
-            stop_loss_entry = slot.filled_stop_loss_entry
-            if stop_loss_entry is not None:
-                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
-        return take_profit_price
-
-    def layer_initial_take_profit_price(
-        self,
-        *,
-        new_price: Money,
-        previous_layer: Layer,
-        direction: PositionSide,
-        pip_size: Decimal,
-        take_profit_pips: Decimal,
-    ) -> Money:
-        """Return L2+ R0 TP price clamped by the previous layer's highest TP."""
-        planned_take_profit_price = self.take_profit_price(
-            direction=direction,
-            entry_price=new_price,
-            tp_pips=take_profit_pips,
-            pip_size=pip_size,
-        )
-        highest = previous_layer.highest_present_slot()
-        if highest is None:
-            return planned_take_profit_price
-        previous_tp = highest.reference_take_profit_price()
-        if previous_tp is None:
-            return planned_take_profit_price
-        if direction == PositionSide.LONG:
-            return min(planned_take_profit_price, previous_tp)
-        return max(planned_take_profit_price, previous_tp)
 
     def stop_loss_on_loss_side(
         self,

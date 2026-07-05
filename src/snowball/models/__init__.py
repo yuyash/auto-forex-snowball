@@ -9,6 +9,7 @@ from snowball.models.entries import (
 )
 from snowball.models.grid import Grid, Layer, Slot
 from snowball.models.identifiers import EntryId, EntryIdType, IntegerIdGenerator
+from snowball.models.position import GridPosition
 from snowball.models.state import Cycle, SnowballState
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "FilledEntry",
     "FilledStopLossEntry",
     "Grid",
+    "GridPosition",
     "IntegerIdGenerator",
     "Layer",
     "RequestedEntry",

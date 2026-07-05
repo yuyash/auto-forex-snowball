@@ -7,14 +7,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Self
 
-from core import PositionSide, StrategyState
+from core import PositionSide
 
 from snowball.enums import CycleStatus
 from snowball.models.entries import FilledEntry
 from snowball.models.grid import Grid, Layer, Slot
 from snowball.models.identifiers import CycleId, EntryId, IntegerIdGenerator
-
-STATE_KEY = "snowball"
 
 
 @dataclass(slots=True)
@@ -100,10 +98,6 @@ class Cycle:
         """Return the live cycle head."""
         return self.grid.head_entry()
 
-    def effective_head(self) -> FilledEntry | None:
-        """Return the live or pending head used for averaging decisions."""
-        return self.grid.effective_head()
-
     def next_entry_id(self, *, layer: Layer, slot: Slot) -> EntryId:
         """Return the next entry identifier for a slot in this cycle."""
         return self.grid.next_entry_id(cycle_id=self.cycle_id, layer=layer, slot=slot)
@@ -165,24 +159,6 @@ class SnowballState:
     def restore_next_cycle_id(self, next_cycle_id: int) -> None:
         """Restore the next cycle id after deserialization."""
         self._cycle_id_generator = IntegerIdGenerator(next_cycle_id)
-
-    @classmethod
-    def from_strategy_state(
-        cls,
-        state: StrategyState,
-    ) -> SnowballState:
-        """Build Snowball state from Core strategy state."""
-        if STATE_KEY not in state:
-            return cls.new()
-        from snowball.serialization import SnowballStateSerializer
-
-        return SnowballStateSerializer.from_mapping(state.require(STATE_KEY))
-
-    def to_strategy_state(self) -> StrategyState:
-        """Convert to Core strategy state."""
-        from snowball.serialization import SnowballStateSerializer
-
-        return StrategyState.of(**{STATE_KEY: SnowballStateSerializer.to_mapping(self)})
 
     def active_cycles(self) -> list[Cycle]:
         """Return active cycles."""

@@ -9,6 +9,7 @@ from enum import StrEnum
 from core import Metadata
 
 from snowball.enums import EntryRole
+from snowball.models.position import GridPosition
 
 type CycleId = int
 
@@ -67,11 +68,7 @@ class EntryId:
     @property
     def role(self) -> EntryRole:
         """Return the entry role derived from the grid position."""
-        if self.slot_number > 0:
-            return EntryRole.COUNTER
-        if self.layer_number == 1:
-            return EntryRole.INITIAL
-        return EntryRole.LAYER_INITIAL
+        return GridPosition(self.layer_number, self.slot_number).role
 
     def to_metadata(self) -> Metadata:
         """Return metadata values for Core strategy events."""

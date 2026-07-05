@@ -34,6 +34,7 @@ from snowball.models.entries import (
 from snowball.models.grid import Grid, Slot
 from snowball.models.identifiers import EntryId, EntryIdType
 from snowball.models.state import Cycle, SnowballState
+from snowball.serialization import SnowballStateSerializer
 
 USD_JPY = CurrencyPair.of("USD_JPY")
 
@@ -126,7 +127,7 @@ class TestSnowballEngine:
         assert requested_stop_loss.entry_id.entry_type == EntryIdType.REQUESTED_STOP_LOSS_ENTRY
         assert stop_loss_entry.entry_id.entry_type == EntryIdType.FILLED_STOP_LOSS_ENTRY
         assert stop_loss_entry.requested is requested_stop_loss
-        assert filled.filled_stop_loss_entry is stop_loss_entry
+        assert filled.filled_stop_loss_entry is None
         assert stop_loss_entry.rebuild(rebuilt) is rebuilt
 
     def test_non_refillable_close_stores_sealed_entry(self) -> None:
@@ -268,7 +269,9 @@ class TestSnowballEngine:
         assert pending_entry.original_entry.filled_stop_loss_entry is pending_entry
         assert stopped.state.cycles[0].pending
         restored_pending_entry = (
-            SnowballState.from_strategy_state(stopped.state.to_strategy_state())
+            SnowballStateSerializer.from_strategy_state(
+                SnowballStateSerializer.to_strategy_state(stopped.state)
+            )
             .cycles[0]
             .grid.layers[0]
             .r0.filled_stop_loss_entry
@@ -352,7 +355,7 @@ class TestSnowballStateSerialization:
             state=state,
         )
 
-        strategy_state = result.state.to_strategy_state()
+        strategy_state = SnowballStateSerializer.to_strategy_state(result.state)
         serialized = strategy_state["snowball"]
         assert serialized["next_cycle_id"] == 2
         assert isinstance(serialized["cycles"][0]["grid"]["layers"], dict)
@@ -360,7 +363,7 @@ class TestSnowballStateSerialization:
         assert isinstance(serialized_layer["slots"], dict)
         assert serialized_layer["build_counts"]["0"] == 1
 
-        restored = SnowballState.from_strategy_state(strategy_state)
+        restored = SnowballStateSerializer.from_strategy_state(strategy_state)
 
         event = result.events[0]
         assert isinstance(event, SnowballOpenEvent)
