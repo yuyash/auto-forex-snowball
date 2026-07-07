@@ -1,6 +1,8 @@
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from core import (
     Currency,
     CurrencyPair,
@@ -92,6 +94,8 @@ class TestSnowballEngine:
         )
 
         assert filled.requested is requested
+        with pytest.raises(FrozenInstanceError):
+            requested.__setattr__("planned_take_profit_price", Money.of("150.60", "JPY"))
         assert requested.entry_id.entry_type == EntryIdType.REQUESTED_ENTRY
         assert requested.entry_id.value == "C1:L1:S0:REQ:B1"
         assert filled.entry_id.entry_type == EntryIdType.FILLED_ENTRY

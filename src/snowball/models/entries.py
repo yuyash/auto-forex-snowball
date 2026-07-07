@@ -11,7 +11,7 @@ from pydantic import AwareDatetime
 from snowball.models.identifiers import EntryId, EntryIdType
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class RequestedEntry:
     """A slot entry requested by the strategy before broker fill confirmation.
 
@@ -32,7 +32,11 @@ class RequestedEntry:
     planned_stop_loss_price: Money | None = None
 
     def __post_init__(self) -> None:
-        self.entry_id = self.entry_id.with_type(EntryIdType.REQUESTED_ENTRY)
+        object.__setattr__(
+            self,
+            "entry_id",
+            self.entry_id.with_type(EntryIdType.REQUESTED_ENTRY),
+        )
 
     def fill(
         self,
@@ -48,6 +52,8 @@ class RequestedEntry:
             filled_units=self.requested_units if filled_units is None else filled_units,
             filled_entry_price=filled_entry_price,
             filled_at=filled_at,
+            planned_take_profit_price=self.planned_take_profit_price,
+            planned_stop_loss_price=self.planned_stop_loss_price,
         )
 
 
@@ -61,6 +67,8 @@ class FilledEntry:
         filled_units: Actual broker filled position size.
         filled_entry_price: Actual broker fill price.
         filled_at: Broker fill timestamp.
+        planned_take_profit_price: Current planned take-profit exit price.
+        planned_stop_loss_price: Current planned stop-loss exit price, when stop loss is enabled.
         filled_stop_loss_entry: Filled stop-loss close for this entry, when closed by stop loss.
     """
 
@@ -69,6 +77,8 @@ class FilledEntry:
     filled_units: Decimal
     filled_entry_price: Money
     filled_at: AwareDatetime
+    planned_take_profit_price: Money
+    planned_stop_loss_price: Money | None = None
     filled_stop_loss_entry: FilledStopLossEntry | None = field(
         default=None,
         repr=False,
@@ -77,20 +87,6 @@ class FilledEntry:
 
     def __post_init__(self) -> None:
         self.entry_id = self.entry_id.with_type(EntryIdType.FILLED_ENTRY)
-
-    @property
-    def planned_take_profit_price(self) -> Money:
-        """Return the planned take-profit exit price."""
-        return self.requested.planned_take_profit_price
-
-    @planned_take_profit_price.setter
-    def planned_take_profit_price(self, value: Money) -> None:
-        self.requested.planned_take_profit_price = value
-
-    @property
-    def planned_stop_loss_price(self) -> Money | None:
-        """Return the planned stop-loss exit price."""
-        return self.requested.planned_stop_loss_price
 
     def close(
         self,

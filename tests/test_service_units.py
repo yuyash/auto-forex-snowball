@@ -138,6 +138,7 @@ def test_take_profit_planner_syncs_weighted_average_to_counter_entries() -> None
     assert take_profit_price == expected
     assert head.planned_take_profit_price == Money.of("151.00", "JPY")
     assert counter.planned_take_profit_price == expected
+    assert counter.requested.planned_take_profit_price == Money.of("150.00", "JPY")
 
 
 def test_stop_loss_planner_buffers_rebuild_trigger_from_stop_loss_exit_price() -> None:

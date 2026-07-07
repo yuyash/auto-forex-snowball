@@ -275,6 +275,12 @@ class SnowballStateSerializer:
             "filled_units": str(entry.filled_units),
             "filled_entry_price": cls._money_to_mapping(entry.filled_entry_price),
             "filled_at": entry.filled_at.isoformat(),
+            "current_planned_take_profit_price": cls._money_to_mapping(
+                entry.planned_take_profit_price,
+            ),
+            "current_planned_stop_loss_price": cls._optional_money_to_mapping(
+                entry.planned_stop_loss_price,
+            ),
         }
 
     @classmethod
@@ -286,6 +292,12 @@ class SnowballStateSerializer:
             filled_units=Decimal(str(data["filled_units"])),
             filled_entry_price=cls._money_from_mapping(data["filled_entry_price"]),
             filled_at=cls._aware_datetime(data["filled_at"]),
+            planned_take_profit_price=cls._money_from_mapping(
+                data["current_planned_take_profit_price"],
+            ),
+            planned_stop_loss_price=cls._optional_money_from_mapping(
+                data["current_planned_stop_loss_price"],
+            ),
         )
 
     @classmethod

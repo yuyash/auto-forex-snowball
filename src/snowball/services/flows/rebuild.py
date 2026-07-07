@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core import Metadata, Tick
 
@@ -64,17 +64,18 @@ class SnowballRebuildService:
                 rebuild_source=stop_loss_entry,
                 entry_price=entry_price,
             )
-            entry.planned_take_profit_price = self.grid_policy.clamp_take_profit(
+            take_profit_price = self.grid_policy.clamp_take_profit(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
                 take_profit_price=entry.planned_take_profit_price,
             )
+            entry = replace(entry, planned_take_profit_price=take_profit_price)
             self.grid_policy.propagate_pending_take_profit(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
-                take_profit_price=entry.planned_take_profit_price,
+                take_profit_price=take_profit_price,
             )
             slot.complete_rebuild(entry)
             self.take_profit_planner.sync_weighted_average_take_profits(layer)
