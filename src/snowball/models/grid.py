@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
 from core import Money
 from pydantic import AwareDatetime
 
-from snowball.enums import EntryRole, SlotStatus
+from snowball.enums import CloseReason, EntryRole, SlotStatus
 from snowball.models.entries import (
     FilledEntry,
     FilledStopLossEntry,
+    RequestedCloseEntry,
     RequestedEntry,
     RequestedStopLossEntry,
     SealedEntry,
@@ -21,7 +22,12 @@ from snowball.models.identifiers import CycleId, EntryId, IntegerIdGenerator
 from snowball.models.position import GridPosition
 
 type Entry = (
-    RequestedEntry | FilledEntry | RequestedStopLossEntry | FilledStopLossEntry | SealedEntry
+    RequestedEntry
+    | FilledEntry
+    | RequestedCloseEntry
+    | RequestedStopLossEntry
+    | FilledStopLossEntry
+    | SealedEntry
 )
 
 
@@ -30,10 +36,6 @@ class Slot:
     """One retracement slot within a layer."""
 
     entry: Entry | None = None
-
-    def __post_init__(self) -> None:
-        if isinstance(self.entry, FilledStopLossEntry):
-            self.entry.original_entry.record_stop_loss(self.entry)
 
     @property
     def requested_entry(self) -> RequestedEntry | None:
@@ -44,6 +46,11 @@ class Slot:
     def filled_entry(self) -> FilledEntry | None:
         """Return the filled live entry held by this slot."""
         return self.entry if isinstance(self.entry, FilledEntry) else None
+
+    @property
+    def requested_close_entry(self) -> RequestedCloseEntry | None:
+        """Return the requested non-stop-loss close held by this slot."""
+        return self.entry if isinstance(self.entry, RequestedCloseEntry) else None
 
     @property
     def requested_stop_loss_entry(self) -> RequestedStopLossEntry | None:
@@ -71,6 +78,7 @@ class Slot:
         if (
             self.requested_entry is not None
             or self.filled_entry is not None
+            or self.requested_close_entry is not None
             or self.requested_stop_loss_entry is not None
         ):
             return SlotStatus.OCCUPIED
@@ -118,6 +126,34 @@ class Slot:
         self.entry = entry.close(closed_at=closed_at, refillable=refillable)
         return entry
 
+    def request_close(
+        self,
+        *,
+        requested_at: AwareDatetime,
+        requested_exit_price: Money,
+        close_reason: CloseReason,
+        refillable: bool,
+    ) -> FilledEntry:
+        """Replace a live entry with a requested non-stop-loss close."""
+        entry = self.filled_entry
+        if entry is None:
+            raise ValueError("slot has no live entry")
+        self.entry = entry.request_close(
+            requested_at=requested_at,
+            requested_exit_price=requested_exit_price,
+            close_reason=close_reason,
+            refillable=refillable,
+        )
+        return entry
+
+    def fill_close(self, *, filled_at: AwareDatetime) -> FilledEntry:
+        """Replace a requested non-stop-loss close with its filled state."""
+        requested = self.requested_close_entry
+        if requested is None:
+            raise ValueError("slot has no requested close entry")
+        self.entry = requested.fill(filled_at=filled_at)
+        return requested.original_entry
+
     def request_stop_loss(
         self,
         *,
@@ -152,8 +188,6 @@ class Slot:
             rebuildable=rebuildable,
             planned_rebuild_trigger_price=planned_rebuild_trigger_price,
         )
-        if isinstance(self.entry, FilledStopLossEntry):
-            requested.original_entry.record_stop_loss(self.entry)
         return requested.original_entry
 
     def complete_rebuild(self, entry: RequestedEntry | FilledEntry) -> None:
@@ -198,9 +232,66 @@ class Slot:
             return None
         return entry.planned_stop_loss_price
 
+    def live_or_pending_close_entry(self) -> FilledEntry | None:
+        """Return the broker-live entry, including one pending close confirmation."""
+        if self.filled_entry is not None:
+            return self.filled_entry
+        if self.requested_close_entry is not None:
+            return self.requested_close_entry.original_entry
+        if self.requested_stop_loss_entry is not None:
+            return self.requested_stop_loss_entry.original_entry
+        return None
+
+    def replace_reference_take_profit_price(self, take_profit_price: Money) -> None:
+        """Replace the retained filled-entry TP price for this slot."""
+        filled_entry = self.filled_entry
+        if filled_entry is not None:
+            self.entry = replace(
+                filled_entry,
+                planned_take_profit_price=take_profit_price,
+            )
+            return
+
+        requested_close_entry = self.requested_close_entry
+        if requested_close_entry is not None:
+            self.entry = replace(
+                requested_close_entry,
+                original_entry=replace(
+                    requested_close_entry.original_entry,
+                    planned_take_profit_price=take_profit_price,
+                ),
+            )
+            return
+
+        requested_stop_loss_entry = self.requested_stop_loss_entry
+        if requested_stop_loss_entry is not None:
+            self.entry = replace(
+                requested_stop_loss_entry,
+                original_entry=replace(
+                    requested_stop_loss_entry.original_entry,
+                    planned_take_profit_price=take_profit_price,
+                ),
+            )
+            return
+
+        filled_stop_loss_entry = self.filled_stop_loss_entry
+        if filled_stop_loss_entry is not None:
+            self.entry = replace(
+                filled_stop_loss_entry,
+                requested=replace(
+                    filled_stop_loss_entry.requested,
+                    original_entry=replace(
+                        filled_stop_loss_entry.original_entry,
+                        planned_take_profit_price=take_profit_price,
+                    ),
+                ),
+            )
+
     def _reference_filled_entry(self) -> FilledEntry | None:
         if self.filled_entry is not None:
             return self.filled_entry
+        if self.requested_close_entry is not None:
+            return self.requested_close_entry.original_entry
         if self.requested_stop_loss_entry is not None:
             return self.requested_stop_loss_entry.original_entry
         if self.filled_stop_loss_entry is not None:
@@ -331,20 +422,20 @@ class Layer:
         return self.slot(0)
 
     def live_entries(self) -> list[FilledEntry]:
-        """Return live entries in ascending R order."""
+        """Return broker-live entries in ascending R order."""
         entries: list[FilledEntry] = []
         for slot in self.slots:
-            entry = slot.filled_entry
+            entry = slot.live_or_pending_close_entry()
             if entry is not None:
                 entries.append(entry)
         return entries
 
     def counter_entries(self) -> list[FilledEntry]:
-        """Return live R1+ entries in ascending R order."""
+        """Return broker-live R1+ entries in ascending R order."""
         entries: list[FilledEntry] = []
         for slot_number in sorted(slot_number for slot_number in self._slots if slot_number > 0):
             slot = self._slots[slot_number]
-            entry = slot.filled_entry
+            entry = slot.live_or_pending_close_entry()
             if entry is not None:
                 entries.append(entry)
         return entries
@@ -361,7 +452,7 @@ class Layer:
         return None
 
     def highest_live_slot(self) -> Slot | None:
-        """Return the highest-R live slot."""
+        """Return the highest-R slot with a directly closeable live entry."""
         for slot in reversed(self.slots):
             if slot.filled_entry is not None:
                 return slot
@@ -473,6 +564,15 @@ class Grid:
             )
         return requested
 
+    def requested_close_slots(self) -> list[tuple[Layer, Slot]]:
+        """Return slots with non-stop-loss closes waiting for fill confirmation."""
+        requested: list[tuple[Layer, Slot]] = []
+        for layer in self.layers:
+            requested.extend(
+                (layer, slot) for slot in layer.slots if slot.requested_close_entry is not None
+            )
+        return requested
+
     def requested_entry_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots with entries waiting for fill confirmation."""
         requested: list[tuple[Layer, Slot]] = []
@@ -497,6 +597,10 @@ class Grid:
     def has_requested_stop_losses(self) -> bool:
         """Return True when any stop-loss close is waiting for fill confirmation."""
         return bool(self.requested_stop_loss_slots())
+
+    def has_requested_closes(self) -> bool:
+        """Return True when any non-stop-loss close is waiting for fill confirmation."""
+        return bool(self.requested_close_slots())
 
     def has_requested_entries(self) -> bool:
         """Return True when any entry is waiting for fill confirmation."""
@@ -527,6 +631,6 @@ class Grid:
         """Find the layer and slot containing an entry."""
         for layer in self.layers:
             for slot in layer.slots:
-                if slot.filled_entry is entry:
+                if slot.live_or_pending_close_entry() is entry:
                     return layer, slot
         return None

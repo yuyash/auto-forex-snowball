@@ -107,9 +107,10 @@ class Cycle:
         self.grid.remove_empty_top_layers()
         has_live = bool(self.grid.all_live_entries())
         has_requested_entry = self.grid.has_requested_entries()
+        has_requested_close = self.grid.has_requested_closes()
         has_requested_stop_loss = self.grid.has_requested_stop_losses()
         has_filled_stop_loss = self.grid.has_filled_stop_loss_entries()
-        if has_live or has_requested_entry or has_requested_stop_loss:
+        if has_live or has_requested_entry or has_requested_close or has_requested_stop_loss:
             self._status = CycleStatus.ACTIVE
         elif has_filled_stop_loss:
             self._status = CycleStatus.PENDING

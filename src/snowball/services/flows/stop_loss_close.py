@@ -74,19 +74,21 @@ class SnowballStopLossCloseService:
                     if self.config.rebuild.enabled
                     else None
                 )
-                slot.fill_stop_loss(
-                    filled_at=tick.timestamp,
-                    filled_stop_loss_exit_price=exit_price,
-                    rebuildable=self.config.rebuild.enabled,
-                    planned_rebuild_trigger_price=rebuild_trigger_price,
-                )
                 events.append(
                     self.event_factory.close_event(
                         cycle=cycle,
                         entry=entry,
                         price=exit_price,
                         close_reason=CloseReason.STOP_LOSS,
-                        metadata=Metadata.of(realized_pl=str(realized)),
+                        metadata=Metadata.of(
+                            realized_pl=str(realized),
+                            rebuildable=self.config.rebuild.enabled,
+                            planned_rebuild_trigger_price=(
+                                None
+                                if rebuild_trigger_price is None
+                                else str(rebuild_trigger_price.amount)
+                            ),
+                        ),
                     )
                 )
         cycle.refresh_status()

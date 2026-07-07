@@ -82,7 +82,12 @@ class SnowballProtectionService:
                 exit_price=exit_price,
             )
             layer_number = cycle.grid.layer_number(layer)
-            slot.close_for_take_profit(closed_at=tick.timestamp, refillable=False)
+            slot.request_close(
+                requested_at=tick.timestamp,
+                requested_exit_price=exit_price,
+                close_reason=CloseReason.SHRINK,
+                refillable=False,
+            )
             cycle.refresh_status()
             events.append(
                 self.event_factory.close_event(

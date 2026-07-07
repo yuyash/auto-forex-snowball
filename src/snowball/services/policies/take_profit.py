@@ -153,11 +153,11 @@ class SnowballTakeProfitPlanner:
                 continue
             filled_entry = slot.filled_entry
             if filled_entry is not None:
-                filled_entry.planned_take_profit_price = take_profit_price
+                slot.replace_reference_take_profit_price(take_profit_price)
                 continue
             stop_loss_entry = slot.filled_stop_loss_entry
             if stop_loss_entry is not None:
-                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
+                slot.replace_reference_take_profit_price(take_profit_price)
         return take_profit_price
 
     def weighted_average_price(

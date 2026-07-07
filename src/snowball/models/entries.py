@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 
 from core import Money
 from pydantic import AwareDatetime
 
+from snowball.enums import CloseReason
 from snowball.models.identifiers import EntryId, EntryIdType
 
 
@@ -57,7 +58,7 @@ class RequestedEntry:
         )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class FilledEntry:
     """A slot entry after broker fill confirmation.
 
@@ -69,7 +70,6 @@ class FilledEntry:
         filled_at: Broker fill timestamp.
         planned_take_profit_price: Current planned take-profit exit price.
         planned_stop_loss_price: Current planned stop-loss exit price, when stop loss is enabled.
-        filled_stop_loss_entry: Filled stop-loss close for this entry, when closed by stop loss.
     """
 
     entry_id: EntryId
@@ -79,14 +79,9 @@ class FilledEntry:
     filled_at: AwareDatetime
     planned_take_profit_price: Money
     planned_stop_loss_price: Money | None = None
-    filled_stop_loss_entry: FilledStopLossEntry | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
 
     def __post_init__(self) -> None:
-        self.entry_id = self.entry_id.with_type(EntryIdType.FILLED_ENTRY)
+        object.__setattr__(self, "entry_id", self.entry_id.with_type(EntryIdType.FILLED_ENTRY))
 
     def close(
         self,
@@ -98,6 +93,24 @@ class FilledEntry:
         if refillable:
             return None
         return self.seal(sealed_at=closed_at)
+
+    def request_close(
+        self,
+        *,
+        requested_exit_price: Money,
+        requested_at: AwareDatetime,
+        close_reason: CloseReason,
+        refillable: bool,
+    ) -> RequestedCloseEntry:
+        """Return a requested non-stop-loss close for this entry."""
+        return RequestedCloseEntry(
+            entry_id=self.entry_id.with_type(EntryIdType.REQUESTED_CLOSE_ENTRY),
+            original_entry=self,
+            requested_exit_price=requested_exit_price,
+            requested_at=requested_at,
+            close_reason=close_reason,
+            refillable=refillable,
+        )
 
     def stop_loss(
         self,
@@ -120,15 +133,62 @@ class FilledEntry:
             sealed_at=sealed_at,
         )
 
-    def record_stop_loss(self, stop_loss_entry: FilledStopLossEntry) -> None:
-        """Record the filled stop-loss close for this entry."""
-        existing = self.filled_stop_loss_entry
-        if existing is not None and existing is not stop_loss_entry:
-            raise ValueError("original entry already has a filled stop-loss entry")
-        self.filled_stop_loss_entry = stop_loss_entry
+
+@dataclass(frozen=True, slots=True)
+class RequestedCloseEntry:
+    """A non-stop-loss close requested before broker fill confirmation.
+
+    Attributes:
+        entry_id: Stable entry identifier for the requested close state.
+        original_entry: FilledEntry state before the close request.
+        requested_exit_price: Price used when requesting the close.
+        requested_at: Tick timestamp when the close was requested.
+        close_reason: Strategy reason for the close request.
+        refillable: Whether the slot can be reused after broker fill.
+    """
+
+    entry_id: EntryId
+    original_entry: FilledEntry
+    requested_exit_price: Money
+    requested_at: AwareDatetime
+    close_reason: CloseReason
+    refillable: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "entry_id",
+            self.entry_id.with_type(EntryIdType.REQUESTED_CLOSE_ENTRY),
+        )
+
+    @property
+    def original_filled_entry_price(self) -> Money:
+        """Return the original filled entry price of the close request."""
+        return self.original_entry.filled_entry_price
+
+    @property
+    def filled_units(self) -> Decimal:
+        """Return the original filled units of the close request."""
+        return self.original_entry.filled_units
+
+    @property
+    def planned_take_profit_price(self) -> Money:
+        """Return the original planned take-profit price of the close request."""
+        return self.original_entry.planned_take_profit_price
+
+    @property
+    def planned_stop_loss_price(self) -> Money | None:
+        """Return the original planned stop-loss price of the close request."""
+        return self.original_entry.planned_stop_loss_price
+
+    def fill(self, *, filled_at: AwareDatetime) -> SealedEntry | None:
+        """Return the slot state after the close is filled."""
+        if self.refillable:
+            return None
+        return self.original_entry.seal(sealed_at=filled_at)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class RequestedStopLossEntry:
     """A stop-loss close requested before broker fill confirmation.
 
@@ -145,7 +205,11 @@ class RequestedStopLossEntry:
     requested_at: AwareDatetime
 
     def __post_init__(self) -> None:
-        self.entry_id = self.entry_id.with_type(EntryIdType.REQUESTED_STOP_LOSS_ENTRY)
+        object.__setattr__(
+            self,
+            "entry_id",
+            self.entry_id.with_type(EntryIdType.REQUESTED_STOP_LOSS_ENTRY),
+        )
 
     @property
     def original_filled_entry_price(self) -> Money:
@@ -189,7 +253,7 @@ class RequestedStopLossEntry:
         )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class FilledStopLossEntry:
     """A stop-loss close after broker fill confirmation, retained for rebuild.
 
@@ -208,7 +272,11 @@ class FilledStopLossEntry:
     planned_rebuild_trigger_price: Money
 
     def __post_init__(self) -> None:
-        self.entry_id = self.entry_id.with_type(EntryIdType.FILLED_STOP_LOSS_ENTRY)
+        object.__setattr__(
+            self,
+            "entry_id",
+            self.entry_id.with_type(EntryIdType.FILLED_STOP_LOSS_ENTRY),
+        )
 
     @property
     def original_entry(self) -> FilledEntry:

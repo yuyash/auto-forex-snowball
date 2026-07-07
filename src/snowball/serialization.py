@@ -9,10 +9,11 @@ from typing import Any
 
 from core import Money, PositionSide, StrategyState
 
-from snowball.enums import CycleStatus
+from snowball.enums import CloseReason, CycleStatus
 from snowball.models.entries import (
     FilledEntry,
     FilledStopLossEntry,
+    RequestedCloseEntry,
     RequestedEntry,
     RequestedStopLossEntry,
     SealedEntry,
@@ -130,6 +131,7 @@ class SnowballStateSerializer:
     def _slot_to_mapping(cls, slot: Slot) -> dict[str, Any]:
         requested_entry = slot.requested_entry
         filled_entry = slot.filled_entry
+        requested_close_entry = slot.requested_close_entry
         requested_stop_loss_entry = slot.requested_stop_loss_entry
         filled_stop_loss_entry = slot.filled_stop_loss_entry
         sealed_entry = slot.sealed_entry
@@ -141,6 +143,11 @@ class SnowballStateSerializer:
             ),
             "filled_entry": (
                 None if filled_entry is None else cls._filled_entry_to_mapping(filled_entry)
+            ),
+            "requested_close_entry": (
+                None
+                if requested_close_entry is None
+                else cls._requested_close_entry_to_mapping(requested_close_entry)
             ),
             "requested_stop_loss_entry": (
                 None
@@ -170,6 +177,11 @@ class SnowballStateSerializer:
             None
             if data["filled_entry"] is None
             else cls._filled_entry_from_mapping(data["filled_entry"])
+        )
+        requested_close_entry = (
+            None
+            if data.get("requested_close_entry") is None
+            else cls._requested_close_entry_from_mapping(data["requested_close_entry"])
         )
         requested_stop_loss_entry = (
             None
@@ -203,6 +215,7 @@ class SnowballStateSerializer:
             for item in (
                 requested_entry,
                 filled_entry,
+                requested_close_entry,
                 requested_stop_loss_entry,
                 filled_stop_loss_entry,
             )
@@ -212,6 +225,7 @@ class SnowballStateSerializer:
         return Slot(
             entry=requested_entry
             or filled_entry
+            or requested_close_entry
             or requested_stop_loss_entry
             or filled_stop_loss_entry
             or (
@@ -298,6 +312,34 @@ class SnowballStateSerializer:
             planned_stop_loss_price=cls._optional_money_from_mapping(
                 data["current_planned_stop_loss_price"],
             ),
+        )
+
+    @classmethod
+    def _requested_close_entry_to_mapping(
+        cls,
+        entry: RequestedCloseEntry,
+    ) -> dict[str, Any]:
+        return {
+            "entry_id": cls._entry_id_to_mapping(entry.entry_id),
+            "original_entry": cls._filled_entry_to_mapping(entry.original_entry),
+            "requested_exit_price": cls._money_to_mapping(entry.requested_exit_price),
+            "requested_at": entry.requested_at.isoformat(),
+            "close_reason": entry.close_reason.value,
+            "refillable": entry.refillable,
+        }
+
+    @classmethod
+    def _requested_close_entry_from_mapping(
+        cls,
+        data: Mapping[str, Any],
+    ) -> RequestedCloseEntry:
+        return RequestedCloseEntry(
+            entry_id=cls._entry_id_from_mapping(data["entry_id"]),
+            original_entry=cls._filled_entry_from_mapping(data["original_entry"]),
+            requested_exit_price=cls._money_from_mapping(data["requested_exit_price"]),
+            requested_at=cls._aware_datetime(data["requested_at"]),
+            close_reason=CloseReason(data["close_reason"]),
+            refillable=bool(data["refillable"]),
         )
 
     @classmethod

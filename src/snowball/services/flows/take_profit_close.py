@@ -48,8 +48,15 @@ class SnowballTakeProfitCloseService:
                 role == EntryRole.COUNTER
                 and retracement_count <= self.config.grid.max_refillable_counter_retracement
             )
-            slot.close_for_take_profit(
-                closed_at=tick.timestamp,
+            close_reason = (
+                CloseReason.LAYER_INITIAL_TAKE_PROFIT
+                if role == EntryRole.LAYER_INITIAL
+                else CloseReason.COUNTER_TAKE_PROFIT
+            )
+            slot.request_close(
+                requested_at=tick.timestamp,
+                requested_exit_price=exit_price,
+                close_reason=close_reason,
                 refillable=refillable_counter,
             )
             realized = self.pricing.realized_pl(
@@ -58,11 +65,6 @@ class SnowballTakeProfitCloseService:
                 exit_price=exit_price,
             )
             self.take_profit_planner.sync_weighted_average_take_profits(layer)
-            close_reason = (
-                CloseReason.LAYER_INITIAL_TAKE_PROFIT
-                if role == EntryRole.LAYER_INITIAL
-                else CloseReason.COUNTER_TAKE_PROFIT
-            )
             events.append(
                 self.event_factory.close_event(
                     cycle=cycle,
@@ -95,7 +97,12 @@ class SnowballTakeProfitCloseService:
             return []
 
         exit_price = self.pricing.exit_side_price(cycle.direction, tick)
-        slot.close_for_take_profit(closed_at=tick.timestamp, refillable=False)
+        slot.request_close(
+            requested_at=tick.timestamp,
+            requested_exit_price=exit_price,
+            close_reason=CloseReason.TAKE_PROFIT,
+            refillable=False,
+        )
         realized = self.pricing.realized_pl(
             direction=cycle.direction,
             entry=entry,

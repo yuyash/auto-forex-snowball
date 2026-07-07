@@ -69,4 +69,8 @@ class SnowballGridSelector:
 
     def shrink_front_entry(self, cycle: Cycle) -> FilledEntry | None:
         """Return the lowest L/R live entry eligible as a shrink candidate."""
-        return cycle.head()
+        for layer in cycle.grid.layers:
+            for slot in layer.slots:
+                if slot.filled_entry is not None:
+                    return slot.filled_entry
+        return None

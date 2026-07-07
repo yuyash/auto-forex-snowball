@@ -37,7 +37,7 @@ class SnowballEventMapper:
         tick: Tick,
         context: StrategyContext,
     ) -> StrategyEvent:
-        """Map one Snowball event to a Core StrategyEvent."""
+        """Map one Snowball event to a Core strategy event."""
         metadata = self._metadata(event)
         if isinstance(event, SnowballOpenEvent):
             return StrategyEvent(

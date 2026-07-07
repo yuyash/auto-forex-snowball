@@ -7,8 +7,12 @@ from core import (
     Currency,
     CurrencyPair,
     Money,
+    Order,
+    OrderSide,
+    OrderStatus,
     PositionSide,
     StrategyContext,
+    StrategyExecutionReport,
     StrategyParameters,
     TaskType,
     Tick,
@@ -29,6 +33,7 @@ from snowball.enums import CloseReason, SlotStatus
 from snowball.events import SnowballCloseEvent, SnowballOpenEvent
 from snowball.models.entries import (
     FilledStopLossEntry,
+    RequestedCloseEntry,
     RequestedEntry,
     RequestedStopLossEntry,
     SealedEntry,
@@ -96,6 +101,8 @@ class TestSnowballEngine:
         assert filled.requested is requested
         with pytest.raises(FrozenInstanceError):
             requested.__setattr__("planned_take_profit_price", Money.of("150.60", "JPY"))
+        with pytest.raises(FrozenInstanceError):
+            filled.__setattr__("planned_take_profit_price", Money.of("150.60", "JPY"))
         assert requested.entry_id.entry_type == EntryIdType.REQUESTED_ENTRY
         assert requested.entry_id.value == "C1:L1:S0:REQ:B1"
         assert filled.entry_id.entry_type == EntryIdType.FILLED_ENTRY
@@ -131,7 +138,17 @@ class TestSnowballEngine:
         assert requested_stop_loss.entry_id.entry_type == EntryIdType.REQUESTED_STOP_LOSS_ENTRY
         assert stop_loss_entry.entry_id.entry_type == EntryIdType.FILLED_STOP_LOSS_ENTRY
         assert stop_loss_entry.requested is requested_stop_loss
-        assert filled.filled_stop_loss_entry is None
+        assert stop_loss_entry.original_entry is filled
+        with pytest.raises(FrozenInstanceError):
+            requested_stop_loss.__setattr__(
+                "requested_stop_loss_exit_price",
+                Money.of("149.80", "JPY"),
+            )
+        with pytest.raises(FrozenInstanceError):
+            stop_loss_entry.__setattr__(
+                "planned_rebuild_trigger_price",
+                Money.of("150.10", "JPY"),
+            )
         assert stop_loss_entry.rebuild(rebuilt) is rebuilt
 
     def test_non_refillable_close_stores_sealed_entry(self) -> None:
@@ -211,7 +228,7 @@ class TestSnowballEngine:
         assert counter.requested_units == Decimal("2000")
         assert result.events[0].metadata["actual_interval_pips"] == "30"
 
-    def test_cycle_take_profit_closes_head_and_reseeds(self) -> None:
+    def test_cycle_take_profit_requests_head_close(self) -> None:
         config = SnowballConfig(cycle=CycleConfig(hedging_enabled=False))
         state = SnowballState.new()
         engine = SnowballEngine(config)
@@ -230,11 +247,15 @@ class TestSnowballEngine:
         close_event = result.events[0]
         assert isinstance(close_event, SnowballCloseEvent)
         assert close_event.close_reason == CloseReason.TAKE_PROFIT
-        assert isinstance(result.events[1], SnowballOpenEvent)
+        assert len(result.events) == 1
         assert len(result.state.cycles) == 1
         assert result.state.cycles[0].active
+        requested_close = result.state.cycles[0].grid.layers[0].r0.requested_close_entry
+        assert isinstance(requested_close, RequestedCloseEntry)
+        assert requested_close.original_entry is close_event.entry
+        assert requested_close.close_reason == CloseReason.TAKE_PROFIT
 
-    def test_stop_loss_creates_filled_stop_loss_entry_and_rebuilds_on_revisit(self) -> None:
+    def test_stop_loss_requests_close_and_rebuilds_after_fill(self) -> None:
         config = SnowballConfig(
             cycle=CycleConfig(hedging_enabled=False),
             stop_loss=StopLossConfig(
@@ -255,22 +276,34 @@ class TestSnowballEngine:
         )
         fill_requested_entries(state, filled_at=first_tick.timestamp)
 
-        stopped = engine.process_tick(
-            tick=TickFactory.tick_at(1, bid="149.90", ask="149.92"),
-            state=state,
-        )
+        stop_tick = TickFactory.tick_at(1, bid="149.90", ask="149.92")
+        stopped = engine.process_tick(tick=stop_tick, state=state)
         pending_slot = stopped.state.cycles[0].grid.layers[0].r0
 
         stopped_event = stopped.events[0]
         assert isinstance(stopped_event, SnowballCloseEvent)
         assert stopped_event.close_reason == CloseReason.STOP_LOSS
-        assert isinstance(pending_slot.entry, FilledStopLossEntry)
+        requested_stop_loss = pending_slot.requested_stop_loss_entry
+        assert isinstance(requested_stop_loss, RequestedStopLossEntry)
+        assert requested_stop_loss.requested_stop_loss_exit_price == Money.of("149.92", "JPY")
+        assert stopped.state.cycles[0].active
+
+        pending_slot.fill_stop_loss(
+            filled_at=stop_tick.timestamp,
+            filled_stop_loss_exit_price=stopped_event.price,
+            rebuildable=True,
+            planned_rebuild_trigger_price=Money.of(
+                stopped_event.metadata["planned_rebuild_trigger_price"],
+                "JPY",
+            ),
+        )
+        stopped.state.cycles[0].refresh_status()
         pending_entry = pending_slot.filled_stop_loss_entry
         assert pending_entry is not None
         assert pending_entry.requested.requested_stop_loss_exit_price == Money.of("149.92", "JPY")
         assert pending_entry.filled_stop_loss_exit_price == Money.of("149.90", "JPY")
         assert pending_entry.planned_rebuild_trigger_price == Money.of("150.02", "JPY")
-        assert pending_entry.original_entry.filled_stop_loss_entry is pending_entry
+        assert pending_entry.original_entry is pending_entry.requested.original_entry
         assert stopped.state.cycles[0].pending
         restored_pending_entry = (
             SnowballStateSerializer.from_strategy_state(
@@ -282,7 +315,7 @@ class TestSnowballEngine:
         )
         assert restored_pending_entry is not None
         assert (
-            restored_pending_entry.original_entry.filled_stop_loss_entry is restored_pending_entry
+            restored_pending_entry.original_entry is restored_pending_entry.requested.original_entry
         )
         assert (
             restored_pending_entry.planned_rebuild_trigger_price
@@ -348,6 +381,65 @@ class TestSnowballStrategy:
         assert result.events[0].metadata["layer_number"] == 1
         assert result.events[0].metadata["cycle_id"] == 1
         assert result.state["snowball"]["cycles"][0]["cycle_id"] == 1
+
+        filled_state = strategy.on_execution_reports(
+            (
+                StrategyExecutionReport(
+                    event=result.events[0],
+                    order=Order(
+                        instrument=USD_JPY,
+                        side=OrderSide.BUY,
+                        units=Decimal("1000"),
+                        price=Money.of("150.02", "JPY"),
+                        status=OrderStatus.FILLED,
+                        filled_units=Decimal("1000"),
+                        average_fill_price=Money.of("150.02", "JPY"),
+                    ),
+                ),
+            ),
+            context.with_state(result.state),
+        )
+
+        filled_slot = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"]
+        assert filled_slot["requested_entry"] is None
+        assert filled_slot["filled_entry"]["filled_units"] == "1000"
+
+        close_result = strategy.on_tick(
+            TickFactory.tick_at(1, bid="150.52", ask="150.54"),
+            context.with_state(filled_state),
+        )
+
+        assert close_result.events[0].action.value == "close_position"
+        requested_close_slot = close_result.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
+            "slots"
+        ]["0"]
+        assert requested_close_slot["filled_entry"] is None
+        assert (
+            requested_close_slot["requested_close_entry"]["close_reason"]
+            == CloseReason.TAKE_PROFIT.value
+        )
+
+        closed_state = strategy.on_execution_reports(
+            (
+                StrategyExecutionReport(
+                    event=close_result.events[0],
+                    order=Order(
+                        instrument=USD_JPY,
+                        side=OrderSide.SELL,
+                        units=Decimal("1000"),
+                        price=Money.of("150.52", "JPY"),
+                        status=OrderStatus.FILLED,
+                        filled_units=Decimal("1000"),
+                        average_fill_price=Money.of("150.52", "JPY"),
+                    ),
+                ),
+            ),
+            context.with_state(close_result.state),
+        )
+
+        closed_slot = closed_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"]
+        assert closed_slot["requested_close_entry"] is None
+        assert closed_slot["sealed"]
 
 
 class TestSnowballStateSerialization:

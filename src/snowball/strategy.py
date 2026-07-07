@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from core import Strategy, StrategyContext, StrategyParameters, StrategyResult, Tick
+from collections.abc import Sequence
+
+from core import (
+    Strategy,
+    StrategyContext,
+    StrategyExecutionReport,
+    StrategyParameters,
+    StrategyResult,
+    StrategyState,
+    Tick,
+)
 
 from snowball.config import SnowballConfig
 from snowball.runtime import SnowballRuntime
@@ -47,6 +57,14 @@ class SnowballStrategy(Strategy):
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         """Process a tick and emit Snowball strategy events."""
         return self._runtime.on_tick(tick, context)
+
+    def on_execution_reports(
+        self,
+        reports: Sequence[StrategyExecutionReport],
+        context: StrategyContext,
+    ) -> StrategyState:
+        """Apply broker execution reports to Snowball state."""
+        return self._runtime.on_execution_reports(reports, context)
 
     @property
     def config(self) -> SnowballConfig:

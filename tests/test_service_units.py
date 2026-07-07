@@ -84,7 +84,9 @@ def test_grid_selector_uses_pending_stop_loss_original_as_effective_head() -> No
     )
 
     assert selector.effective_head(cycle) is original
-    assert original.filled_stop_loss_entry is layer.r0.filled_stop_loss_entry
+    pending_stop_loss = layer.r0.filled_stop_loss_entry
+    assert pending_stop_loss is not None
+    assert pending_stop_loss.original_entry is original
 
 
 def test_grid_selector_respects_refillable_counter_limit() -> None:
@@ -137,7 +139,9 @@ def test_take_profit_planner_syncs_weighted_average_to_counter_entries() -> None
     )
     assert take_profit_price == expected
     assert head.planned_take_profit_price == Money.of("151.00", "JPY")
-    assert counter.planned_take_profit_price == expected
+    synced_counter = layer.slot(1).filled_entry
+    assert synced_counter is not None
+    assert synced_counter.planned_take_profit_price == expected
     assert counter.requested.planned_take_profit_price == Money.of("150.00", "JPY")
 
 

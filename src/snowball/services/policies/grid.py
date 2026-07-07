@@ -122,12 +122,12 @@ class SnowballGridPolicy:
                 cycle.direction == PositionSide.LONG
                 and stop_loss_entry.original_entry.planned_take_profit_price < take_profit_price
             ):
-                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
+                slot.replace_reference_take_profit_price(take_profit_price)
             elif (
                 cycle.direction == PositionSide.SHORT
                 and stop_loss_entry.original_entry.planned_take_profit_price > take_profit_price
             ):
-                stop_loss_entry.original_entry.planned_take_profit_price = take_profit_price
+                slot.replace_reference_take_profit_price(take_profit_price)
 
     def _present_slots(self, cycle: Cycle) -> list[PresentSlot]:
         present: list[PresentSlot] = []
