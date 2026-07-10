@@ -222,8 +222,8 @@ class SnowballStateSerializer:
         ) + int(sealed)
         if populated_count > 1:
             raise ValueError("slot cannot contain multiple entry states")
-        return Slot(
-            entry=requested_entry
+        return Slot.restore(
+            requested_entry
             or filled_entry
             or requested_close_entry
             or requested_stop_loss_entry
@@ -232,7 +232,7 @@ class SnowballStateSerializer:
                 SealedEntry(entry_id=sealed_entry_id, sealed_at=sealed_at)
                 if sealed and sealed_at is not None and sealed_entry_id is not None
                 else None
-            ),
+            )
         )
 
     @classmethod

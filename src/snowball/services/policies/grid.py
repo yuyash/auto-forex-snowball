@@ -105,30 +105,6 @@ class SnowballGridPolicy:
             return min(take_profit_price, bound)
         return max(take_profit_price, bound)
 
-    def propagate_pending_take_profit(
-        self,
-        *,
-        cycle: Cycle,
-        layer: Layer,
-        retracement_count: int,
-        take_profit_price: Money,
-    ) -> None:
-        """Adjust preceding pending TPs when a later rebuild sets a tighter bound."""
-        for _layer, slot in self._preceding_slots(cycle, layer, retracement_count):
-            stop_loss_entry = slot.filled_stop_loss_entry
-            if stop_loss_entry is None:
-                continue
-            if (
-                cycle.direction == PositionSide.LONG
-                and stop_loss_entry.original_entry.planned_take_profit_price < take_profit_price
-            ):
-                slot.replace_reference_take_profit_price(take_profit_price)
-            elif (
-                cycle.direction == PositionSide.SHORT
-                and stop_loss_entry.original_entry.planned_take_profit_price > take_profit_price
-            ):
-                slot.replace_reference_take_profit_price(take_profit_price)
-
     def _present_slots(self, cycle: Cycle) -> list[PresentSlot]:
         present: list[PresentSlot] = []
         for layer, slot in cycle.grid.all_present_slots():

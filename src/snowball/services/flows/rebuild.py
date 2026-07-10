@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from core import Metadata, Tick
 
@@ -47,15 +47,29 @@ class SnowballRebuildService:
                 tick=tick,
             ):
                 continue
-            raw_entry_price = self.pricing.entry_side_price(cycle.direction, tick)
             entry_price = self.grid_policy.clamp_entry_price(
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
-                entry_price=raw_entry_price,
+                entry_price=stop_loss_entry.planned_rebuild_trigger_price,
             )
+            retracement_count = layer.retracement_count(slot)
+            take_profit_price = self.take_profit_planner.rebuild_take_profit_price(
+                stop_loss_entry=stop_loss_entry,
+                direction=cycle.direction,
+                retracement_count=retracement_count,
+                entry_price=entry_price,
+                pip_size=tick.instrument.pip_size,
+            )
+            take_profit_price = self.grid_policy.clamp_take_profit(
+                cycle=cycle,
+                layer=layer,
+                retracement_count=retracement_count,
+                take_profit_price=take_profit_price,
+            )
+            entry_id = cycle.next_entry_id(layer=layer, slot=slot)
             entry = self.entry_service.create_rebuild_entry(
-                entry_id=cycle.next_entry_id(layer=layer, slot=slot),
+                entry_id=entry_id,
                 tick=tick,
                 direction=cycle.direction,
                 grid=cycle.grid,
@@ -63,22 +77,9 @@ class SnowballRebuildService:
                 slot=slot,
                 rebuild_source=stop_loss_entry,
                 entry_price=entry_price,
-            )
-            take_profit_price = self.grid_policy.clamp_take_profit(
-                cycle=cycle,
-                layer=layer,
-                retracement_count=layer.retracement_count(slot),
-                take_profit_price=entry.planned_take_profit_price,
-            )
-            entry = replace(entry, planned_take_profit_price=take_profit_price)
-            self.grid_policy.propagate_pending_take_profit(
-                cycle=cycle,
-                layer=layer,
-                retracement_count=layer.retracement_count(slot),
                 take_profit_price=take_profit_price,
             )
-            slot.complete_rebuild(entry)
-            self.take_profit_planner.sync_weighted_average_take_profits(layer)
+            slot.complete_rebuild(entry, expected_entry_id=entry_id)
             events.append(
                 self.event_factory.open_event(
                     cycle=cycle,

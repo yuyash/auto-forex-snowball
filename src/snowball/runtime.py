@@ -90,13 +90,12 @@ class SnowballRuntime:
                     requested = slot.requested_entry
                     if requested is None or requested.entry_id.value != entry_id:
                         continue
-                    slot.fill_entry(
-                        requested.fill(
-                            filled_entry_price=fill_price,
-                            filled_at=report.event.timestamp,
-                            filled_units=order.filled_units,
-                        )
+                    filled_entry = requested.fill(
+                        filled_entry_price=fill_price,
+                        filled_at=report.event.timestamp,
+                        filled_units=order.filled_units,
                     )
+                    slot.fill_entry(filled_entry)
                     cycle.refresh_status()
                     return
 

@@ -108,10 +108,15 @@ class SnowballEntryService:
         previous_layer: Layer,
         layer: Layer,
         slot: Slot,
+        entry_price: Money | None = None,
     ) -> RequestedEntry:
         """Create an L2+ R0 entry whose TP is bounded by the previous layer."""
         pip_size = tick.instrument.pip_size
-        entry_price = self.pricing.entry_side_price(direction, tick)
+        planned_entry_price = (
+            self.pricing.entry_side_price(direction, tick)
+            if entry_price is None
+            else entry_price
+        )
         retracement_count = layer.retracement_count(slot)
         return self._requested_entry(
             entry_id=entry_id,
@@ -120,9 +125,9 @@ class SnowballEntryService:
             role=EntryRole.LAYER_INITIAL,
             layer=layer,
             retracement_count=retracement_count,
-            entry_price=entry_price,
+            entry_price=planned_entry_price,
             take_profit_price=self.take_profit_planner.layer_initial_take_profit_price(
-                new_price=entry_price,
+                new_price=planned_entry_price,
                 previous_layer=previous_layer,
                 direction=direction,
                 pip_size=pip_size,
@@ -140,9 +145,9 @@ class SnowballEntryService:
         slot: Slot,
         rebuild_source: FilledStopLossEntry,
         entry_price: Money,
+        take_profit_price: Money,
     ) -> RequestedEntry:
         """Create a requested entry replacing a filled stop-loss entry."""
-        pip_size = tick.instrument.pip_size
         retracement_count = layer.retracement_count(slot)
         role = grid.role_for(layer, slot)
         return self._requested_entry(
@@ -154,13 +159,7 @@ class SnowballEntryService:
             retracement_count=retracement_count,
             entry_price=entry_price,
             rebuild_source=rebuild_source,
-            take_profit_price=self.take_profit_planner.rebuild_take_profit_price(
-                stop_loss_entry=rebuild_source,
-                direction=direction,
-                retracement_count=retracement_count,
-                entry_price=entry_price,
-                pip_size=pip_size,
-            ),
+            take_profit_price=take_profit_price,
         )
 
     def _requested_entry(
@@ -196,6 +195,7 @@ class SnowballEntryService:
                 tick=tick,
                 direction=direction,
                 entry_price=entry_price,
+                take_profit_price=take_profit_price,
                 retracement_count=retracement_count,
                 rebuild_source=rebuild_source,
             ),

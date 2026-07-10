@@ -75,15 +75,17 @@ class SnowballCycleService:
         )
         layer = cycle.grid.current_layer
         slot = layer.r0
+        entry_id = cycle.next_entry_id(layer=layer, slot=slot)
         entry = self.entry_service.create_initial_entry(
-            entry_id=cycle.next_entry_id(layer=layer, slot=slot),
+            entry_id=entry_id,
             tick=tick,
             direction=direction,
             grid=cycle.grid,
             layer=layer,
             slot=slot,
         )
-        slot.place_entry(entry)
+        slot.place_entry(entry, expected_entry_id=entry_id)
+        cycle.refresh_status()
         state.add_cycle(cycle)
         return [
             self.event_factory.open_event(

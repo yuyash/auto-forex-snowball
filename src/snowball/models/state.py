@@ -34,6 +34,7 @@ class Cycle:
         status: CycleStatus = CycleStatus.ACTIVE,
     ) -> Self:
         """Create a cycle from public constructor values."""
+        grid.validate_for_cycle(cycle_id)
         return cls(
             _cycle_id=cycle_id,
             _direction=direction,
@@ -104,7 +105,9 @@ class Cycle:
 
     def refresh_status(self) -> None:
         """Normalize the grid and update the lifecycle status from current contents."""
+        self.grid.validate_for_cycle(self.cycle_id)
         self.grid.remove_empty_top_layers()
+        self.grid.validate_for_cycle(self.cycle_id)
         has_live = bool(self.grid.all_live_entries())
         has_requested_entry = self.grid.has_requested_entries()
         has_requested_close = self.grid.has_requested_closes()

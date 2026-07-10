@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from core import Metadata, Money, PositionSide, Tick
 
@@ -15,7 +16,6 @@ from snowball.services.calculators import SnowballCalculator
 from snowball.services.flows.entry import SnowballEntryService
 from snowball.services.flows.event_factory import SnowballEventFactory
 from snowball.services.market_pricing import SnowballMarketPricing
-from snowball.services.policies.take_profit import SnowballTakeProfitPlanner
 from snowball.services.selectors.grid import SnowballGridSelector
 
 
@@ -28,7 +28,6 @@ class SnowballCounterService:
     pricing: SnowballMarketPricing
     entry_service: SnowballEntryService
     grid_selector: SnowballGridSelector
-    take_profit_planner: SnowballTakeProfitPlanner
     event_factory: SnowballEventFactory
 
     def process_counter_adds(
@@ -37,18 +36,11 @@ class SnowballCounterService:
         cycle: Cycle,
         tick: Tick,
     ) -> list[SnowballEvent]:
-        """Open as many counter or next-layer entries as the current tick allows."""
-        events: list[SnowballEvent] = []
-        max_adds = self.config.grid.max_layers * (self.config.grid.max_retracements_per_layer + 1)
-        for _ in range(max_adds):
-            event = self._try_add_one_counter_or_layer(
-                cycle=cycle,
-                tick=tick,
-            )
-            if event is None:
-                break
-            events.append(event)
-        return events
+        """Open at most one counter or next-layer entry for this cycle on the tick."""
+        event = self._try_add_one_counter_or_layer(cycle=cycle, tick=tick)
+        if event is None:
+            return []
+        return [event]
 
     def _try_add_one_counter_or_layer(
         self,
@@ -112,8 +104,9 @@ class SnowballCounterService:
         interval = self.calculator.counter_interval_pips(layer.retracement_count(slot))
         if adverse < interval:
             return None
+        entry_id = cycle.next_entry_id(layer=layer, slot=slot)
         entry = self.entry_service.create_counter_entry(
-            entry_id=cycle.next_entry_id(layer=layer, slot=slot),
+            entry_id=entry_id,
             tick=tick,
             direction=cycle.direction,
             grid=cycle.grid,
@@ -121,8 +114,7 @@ class SnowballCounterService:
             slot=slot,
             weighted_average_head=cycle.head(),
         )
-        slot.place_entry(entry)
-        self.take_profit_planner.sync_weighted_average_take_profits(layer)
+        slot.place_entry(entry, expected_entry_id=entry_id)
         cycle.refresh_status()
         return self.event_factory.open_event(
             cycle=cycle,
@@ -162,21 +154,29 @@ class SnowballCounterService:
         if adverse < interval:
             return None
 
+        planned_entry_price = self._next_layer_initial_entry_price(
+            direction=cycle.direction,
+            reference=reference,
+            interval_pips=interval,
+            pip_size=pip_size,
+        )
         previous_layer = cycle.grid.current_layer
         layer = cycle.grid.add_layer(
             base_units=self.config.sizing.layer_base_units(len(cycle.grid.layers) + 1),
             max_retracements=self.config.grid.max_retracements_per_layer,
         )
         slot = layer.r0
+        entry_id = cycle.next_entry_id(layer=layer, slot=slot)
         requested_entry = self.entry_service.create_layer_initial_entry(
-            entry_id=cycle.next_entry_id(layer=layer, slot=slot),
+            entry_id=entry_id,
             tick=tick,
             direction=cycle.direction,
             previous_layer=previous_layer,
             layer=layer,
             slot=slot,
+            entry_price=planned_entry_price,
         )
-        slot.place_entry(requested_entry)
+        slot.place_entry(requested_entry, expected_entry_id=entry_id)
         cycle.refresh_status()
         return self.event_factory.open_event(
             cycle=cycle,
@@ -197,3 +197,16 @@ class SnowballCounterService:
         if direction == PositionSide.LONG:
             return current_entry_price < reference.filled_entry_price
         return current_entry_price > reference.filled_entry_price
+
+    def _next_layer_initial_entry_price(
+        self,
+        *,
+        direction: PositionSide,
+        reference: Money,
+        interval_pips: Decimal,
+        pip_size: Decimal,
+    ) -> Money:
+        interval_amount = interval_pips * pip_size
+        if direction == PositionSide.LONG:
+            return Money.of(reference.amount - interval_amount, reference.currency)
+        return Money.of(reference.amount + interval_amount, reference.currency)

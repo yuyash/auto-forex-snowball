@@ -47,15 +47,28 @@ class RequestedEntry:
         filled_units: Decimal | None = None,
     ) -> FilledEntry:
         """Return a filled entry from this requested entry."""
+        fill_delta = (filled_entry_price - self.requested_entry_price).amount
         return FilledEntry(
             entry_id=self.entry_id.with_type(EntryIdType.FILLED_ENTRY),
             requested=self,
             filled_units=self.requested_units if filled_units is None else filled_units,
             filled_entry_price=filled_entry_price,
             filled_at=filled_at,
-            planned_take_profit_price=self.planned_take_profit_price,
-            planned_stop_loss_price=self.planned_stop_loss_price,
+            planned_take_profit_price=self._shift_money(
+                self.planned_take_profit_price,
+                fill_delta,
+            ),
+            planned_stop_loss_price=self._shift_money(
+                self.planned_stop_loss_price,
+                fill_delta,
+            ),
         )
+
+    @staticmethod
+    def _shift_money(value: Money | None, delta: Decimal) -> Money | None:
+        if value is None or not delta:
+            return value
+        return Money.of(value.amount + delta, value.currency)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +81,8 @@ class FilledEntry:
         filled_units: Actual broker filled position size.
         filled_entry_price: Actual broker fill price.
         filled_at: Broker fill timestamp.
-        planned_take_profit_price: Current planned take-profit exit price.
-        planned_stop_loss_price: Current planned stop-loss exit price, when stop loss is enabled.
+        planned_take_profit_price: Fill-adjusted take-profit exit price.
+        planned_stop_loss_price: Fill-adjusted stop-loss exit price, when stop loss is enabled.
     """
 
     entry_id: EntryId
@@ -302,10 +315,6 @@ class FilledStopLossEntry:
     def planned_stop_loss_price(self) -> Money | None:
         """Return the original planned stop-loss price of the filled stop-loss entry."""
         return self.original_entry.planned_stop_loss_price
-
-    def rebuild(self, entry: RequestedEntry | FilledEntry) -> RequestedEntry | FilledEntry:
-        """Return the entry replacing this stop-loss entry."""
-        return entry
 
 
 @dataclass(frozen=True, slots=True)

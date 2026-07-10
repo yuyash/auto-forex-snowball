@@ -59,6 +59,13 @@ class RebuildEntryPriceMode(StrEnum):
     STOP_LOSS_EXIT_PRICE = "stop_loss_exit_price"
 
 
+class StopLossMode(StrEnum):
+    """Policy for placing ordinary stop-loss prices."""
+
+    AUTO = "auto"
+    DISTANCE = "distance"
+
+
 class RebuildTakeProfitMode(StrEnum):
     """Take-profit policy for rebuilt entries."""
 

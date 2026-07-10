@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from core import Money
@@ -18,7 +18,7 @@ from snowball.models.entries import (
     RequestedStopLossEntry,
     SealedEntry,
 )
-from snowball.models.identifiers import CycleId, EntryId, IntegerIdGenerator
+from snowball.models.identifiers import CycleId, EntryId, EntryIdType, IntegerIdGenerator
 from snowball.models.position import GridPosition
 
 type Entry = (
@@ -31,41 +31,58 @@ type Entry = (
 )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class Slot:
     """One retracement slot within a layer."""
 
-    entry: Entry | None = None
+    _entry: Entry | None
+
+    def __init__(self) -> None:
+        self._entry = None
+
+    @classmethod
+    def restore(cls, entry: Entry | None) -> Slot:
+        """Restore a slot at a serialization boundary."""
+        slot = cls()
+        if entry is not None:
+            slot._validate_entry(entry)
+        slot._entry = entry
+        return slot
+
+    @property
+    def entry(self) -> Entry | None:
+        """Return the current slot entry without exposing mutation."""
+        return self._entry
 
     @property
     def requested_entry(self) -> RequestedEntry | None:
         """Return the requested entry waiting for fill confirmation."""
-        return self.entry if isinstance(self.entry, RequestedEntry) else None
+        return self._entry if isinstance(self._entry, RequestedEntry) else None
 
     @property
     def filled_entry(self) -> FilledEntry | None:
         """Return the filled live entry held by this slot."""
-        return self.entry if isinstance(self.entry, FilledEntry) else None
+        return self._entry if isinstance(self._entry, FilledEntry) else None
 
     @property
     def requested_close_entry(self) -> RequestedCloseEntry | None:
         """Return the requested non-stop-loss close held by this slot."""
-        return self.entry if isinstance(self.entry, RequestedCloseEntry) else None
+        return self._entry if isinstance(self._entry, RequestedCloseEntry) else None
 
     @property
     def requested_stop_loss_entry(self) -> RequestedStopLossEntry | None:
         """Return the requested stop-loss close held by this slot."""
-        return self.entry if isinstance(self.entry, RequestedStopLossEntry) else None
+        return self._entry if isinstance(self._entry, RequestedStopLossEntry) else None
 
     @property
     def filled_stop_loss_entry(self) -> FilledStopLossEntry | None:
         """Return the filled stop-loss entry held by this slot."""
-        return self.entry if isinstance(self.entry, FilledStopLossEntry) else None
+        return self._entry if isinstance(self._entry, FilledStopLossEntry) else None
 
     @property
     def sealed_entry(self) -> SealedEntry | None:
         """Return the sealed-entry marker held by this slot."""
-        return self.entry if isinstance(self.entry, SealedEntry) else None
+        return self._entry if isinstance(self._entry, SealedEntry) else None
 
     @property
     def is_sealed(self) -> bool:
@@ -91,18 +108,19 @@ class Slot:
     @property
     def is_present(self) -> bool:
         """Return True when the slot blocks lower-numbered refill."""
-        return self.entry is not None
+        return self._entry is not None
 
     @property
     def is_available(self) -> bool:
         """Return True when a new entry may be placed here."""
         return self.status == SlotStatus.AVAILABLE
 
-    def place_entry(self, entry: RequestedEntry | FilledEntry) -> None:
-        """Place a requested or filled entry in an available slot."""
+    def place_entry(self, entry: RequestedEntry, *, expected_entry_id: EntryId) -> None:
+        """Place a requested entry in an available slot."""
         if not self.is_available:
             raise ValueError("slot is not available")
-        self.entry = entry
+        self._validate_entry(entry, expected_entry_id=expected_entry_id)
+        self._entry = entry
 
     def fill_entry(self, entry: FilledEntry) -> None:
         """Replace a requested entry with its filled entry."""
@@ -111,20 +129,8 @@ class Slot:
             raise ValueError("slot has no requested entry")
         if entry.requested is not requested:
             raise ValueError("filled entry does not belong to this requested entry")
-        self.entry = entry
-
-    def close_for_take_profit(
-        self,
-        *,
-        closed_at: AwareDatetime,
-        refillable: bool,
-    ) -> FilledEntry:
-        """Remove a live entry after a normal take-profit close."""
-        entry = self.filled_entry
-        if entry is None:
-            raise ValueError("slot has no live entry")
-        self.entry = entry.close(closed_at=closed_at, refillable=refillable)
-        return entry
+        self._validate_entry(entry, expected_entry_id=requested.entry_id)
+        self._entry = entry
 
     def request_close(
         self,
@@ -138,12 +144,14 @@ class Slot:
         entry = self.filled_entry
         if entry is None:
             raise ValueError("slot has no live entry")
-        self.entry = entry.request_close(
+        requested = entry.request_close(
             requested_at=requested_at,
             requested_exit_price=requested_exit_price,
             close_reason=close_reason,
             refillable=refillable,
         )
+        self._validate_entry(requested, expected_entry_id=entry.entry_id)
+        self._entry = requested
         return entry
 
     def fill_close(self, *, filled_at: AwareDatetime) -> FilledEntry:
@@ -151,7 +159,15 @@ class Slot:
         requested = self.requested_close_entry
         if requested is None:
             raise ValueError("slot has no requested close entry")
-        self.entry = requested.fill(filled_at=filled_at)
+        if filled_at < requested.requested_at:
+            raise ValueError("close fill timestamp precedes close request")
+        next_entry = requested.fill(filled_at=filled_at)
+        if next_entry is not None:
+            self._validate_entry(
+                next_entry,
+                expected_entry_id=requested.original_entry.entry_id,
+            )
+        self._entry = next_entry
         return requested.original_entry
 
     def request_stop_loss(
@@ -164,10 +180,12 @@ class Slot:
         entry = self.filled_entry
         if entry is None:
             raise ValueError("slot has no live entry")
-        self.entry = entry.stop_loss(
+        requested = entry.stop_loss(
             requested_at=requested_at,
             requested_stop_loss_exit_price=requested_stop_loss_exit_price,
         )
+        self._validate_entry(requested, expected_entry_id=entry.entry_id)
+        self._entry = requested
         return entry
 
     def fill_stop_loss(
@@ -182,27 +200,54 @@ class Slot:
         requested = self.requested_stop_loss_entry
         if requested is None:
             raise ValueError("slot has no requested stop-loss entry")
-        self.entry = requested.fill(
+        if filled_at < requested.requested_at:
+            raise ValueError("stop-loss fill timestamp precedes stop-loss request")
+        next_entry = requested.fill(
             filled_at=filled_at,
             filled_stop_loss_exit_price=filled_stop_loss_exit_price,
             rebuildable=rebuildable,
             planned_rebuild_trigger_price=planned_rebuild_trigger_price,
         )
+        self._validate_entry(
+            next_entry,
+            expected_entry_id=requested.original_entry.entry_id,
+        )
+        self._entry = next_entry
         return requested.original_entry
 
-    def complete_rebuild(self, entry: RequestedEntry | FilledEntry) -> None:
-        """Replace a pending rebuild with a requested or filled rebuilt entry."""
+    def complete_rebuild(self, entry: RequestedEntry, *, expected_entry_id: EntryId) -> None:
+        """Replace a pending rebuild with a requested rebuilt entry."""
         stop_loss_entry = self.filled_stop_loss_entry
         if stop_loss_entry is None:
             raise ValueError("slot has no pending rebuild")
-        self.entry = stop_loss_entry.rebuild(entry)
+        self._validate_entry(stop_loss_entry)
+        self._validate_entry(entry, expected_entry_id=expected_entry_id)
+        original_id = stop_loss_entry.original_entry.entry_id
+        if not self._same_entry_slot(entry.entry_id, original_id):
+            raise ValueError("rebuilt entry does not belong to the stopped slot")
+        if entry.entry_id.build_count <= original_id.build_count:
+            raise ValueError("rebuilt entry build count must advance")
+        if entry.requested_at < stop_loss_entry.filled_at:
+            raise ValueError("rebuild request timestamp precedes stop-loss fill")
+        self._require_same_currency(
+            stop_loss_entry.planned_rebuild_trigger_price,
+            entry.requested_entry_price,
+            "rebuilt entry price",
+        )
+        self._entry = entry
 
     def unseal(self) -> None:
         """Replace a sealed entry with an available slot."""
         sealed_entry = self.sealed_entry
         if sealed_entry is None:
             raise ValueError("slot is not sealed")
-        self.entry = sealed_entry.unseal()
+        self._entry = sealed_entry.unseal()
+
+    def validate_entry(self, *, expected_entry_id: EntryId | None = None) -> None:
+        """Validate the current entry and its expected grid identity."""
+        if self._entry is None:
+            return
+        self._validate_entry(self._entry, expected_entry_id=expected_entry_id)
 
     def reference_entry_price(self) -> Money | None:
         """Return the filled entry price retained for grid calculations."""
@@ -242,51 +287,6 @@ class Slot:
             return self.requested_stop_loss_entry.original_entry
         return None
 
-    def replace_reference_take_profit_price(self, take_profit_price: Money) -> None:
-        """Replace the retained filled-entry TP price for this slot."""
-        filled_entry = self.filled_entry
-        if filled_entry is not None:
-            self.entry = replace(
-                filled_entry,
-                planned_take_profit_price=take_profit_price,
-            )
-            return
-
-        requested_close_entry = self.requested_close_entry
-        if requested_close_entry is not None:
-            self.entry = replace(
-                requested_close_entry,
-                original_entry=replace(
-                    requested_close_entry.original_entry,
-                    planned_take_profit_price=take_profit_price,
-                ),
-            )
-            return
-
-        requested_stop_loss_entry = self.requested_stop_loss_entry
-        if requested_stop_loss_entry is not None:
-            self.entry = replace(
-                requested_stop_loss_entry,
-                original_entry=replace(
-                    requested_stop_loss_entry.original_entry,
-                    planned_take_profit_price=take_profit_price,
-                ),
-            )
-            return
-
-        filled_stop_loss_entry = self.filled_stop_loss_entry
-        if filled_stop_loss_entry is not None:
-            self.entry = replace(
-                filled_stop_loss_entry,
-                requested=replace(
-                    filled_stop_loss_entry.requested,
-                    original_entry=replace(
-                        filled_stop_loss_entry.original_entry,
-                        planned_take_profit_price=take_profit_price,
-                    ),
-                ),
-            )
-
     def _reference_filled_entry(self) -> FilledEntry | None:
         if self.filled_entry is not None:
             return self.filled_entry
@@ -297,6 +297,302 @@ class Slot:
         if self.filled_stop_loss_entry is not None:
             return self.filled_stop_loss_entry.original_entry
         return None
+
+    @classmethod
+    def _validate_entry(
+        cls,
+        entry: Entry,
+        *,
+        expected_entry_id: EntryId | None = None,
+    ) -> None:
+        if isinstance(entry, RequestedEntry):
+            cls._validate_requested_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        if isinstance(entry, FilledEntry):
+            cls._validate_filled_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        if isinstance(entry, RequestedCloseEntry):
+            cls._validate_requested_close_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        if isinstance(entry, RequestedStopLossEntry):
+            cls._validate_requested_stop_loss_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        if isinstance(entry, FilledStopLossEntry):
+            cls._validate_filled_stop_loss_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        if isinstance(entry, SealedEntry):
+            cls._validate_sealed_entry(entry, expected_entry_id=expected_entry_id)
+            return
+        raise TypeError("unknown slot entry type")
+
+    @classmethod
+    def _validate_requested_entry(
+        cls,
+        entry: RequestedEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.REQUESTED_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        cls._require_positive_decimal(entry.requested_units, "requested units")
+        cls._require_positive_money(entry.requested_entry_price, "requested entry price")
+        cls._require_positive_money(
+            entry.planned_take_profit_price,
+            "planned take-profit price",
+        )
+        cls._require_same_currency(
+            entry.requested_entry_price,
+            entry.planned_take_profit_price,
+            "planned take-profit price",
+        )
+        if entry.planned_stop_loss_price is not None:
+            cls._require_positive_money(
+                entry.planned_stop_loss_price,
+                "planned stop-loss price",
+            )
+            cls._require_same_currency(
+                entry.requested_entry_price,
+                entry.planned_stop_loss_price,
+                "planned stop-loss price",
+            )
+        cls._require_aware_datetime(entry.requested_at, "requested_at")
+
+    @classmethod
+    def _validate_filled_entry(
+        cls,
+        entry: FilledEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._validate_requested_entry(
+            entry.requested,
+            expected_entry_id=(
+                None
+                if expected_entry_id is None
+                else expected_entry_id.with_type(EntryIdType.REQUESTED_ENTRY)
+            ),
+        )
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.FILLED_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        if entry.entry_id != entry.requested.entry_id.with_type(EntryIdType.FILLED_ENTRY):
+            raise ValueError("filled entry id does not match requested entry id")
+        cls._require_positive_decimal(entry.filled_units, "filled units")
+        cls._require_positive_money(entry.filled_entry_price, "filled entry price")
+        cls._require_same_currency(
+            entry.requested.requested_entry_price,
+            entry.filled_entry_price,
+            "filled entry price",
+        )
+        cls._require_aware_datetime(entry.filled_at, "filled_at")
+        if entry.filled_at < entry.requested.requested_at:
+            raise ValueError("entry fill timestamp precedes entry request")
+        expected_take_profit = cls._fill_shifted_money(
+            entry.requested.planned_take_profit_price,
+            requested_entry_price=entry.requested.requested_entry_price,
+            filled_entry_price=entry.filled_entry_price,
+        )
+        if entry.planned_take_profit_price != expected_take_profit:
+            raise ValueError("filled entry take-profit price is not fill-adjusted")
+        expected_stop_loss = cls._fill_shifted_money(
+            entry.requested.planned_stop_loss_price,
+            requested_entry_price=entry.requested.requested_entry_price,
+            filled_entry_price=entry.filled_entry_price,
+        )
+        if entry.planned_stop_loss_price != expected_stop_loss:
+            raise ValueError("filled entry stop-loss price is not fill-adjusted")
+
+    @classmethod
+    def _validate_requested_close_entry(
+        cls,
+        entry: RequestedCloseEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._validate_filled_entry(
+            entry.original_entry,
+            expected_entry_id=(
+                None
+                if expected_entry_id is None
+                else expected_entry_id.with_type(EntryIdType.FILLED_ENTRY)
+            ),
+        )
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.REQUESTED_CLOSE_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        if entry.entry_id != entry.original_entry.entry_id.with_type(
+            EntryIdType.REQUESTED_CLOSE_ENTRY
+        ):
+            raise ValueError("requested close id does not match original entry id")
+        if entry.close_reason == CloseReason.STOP_LOSS:
+            raise ValueError("stop-loss close must use requested stop-loss entry")
+        cls._require_positive_money(entry.requested_exit_price, "requested exit price")
+        cls._require_same_currency(
+            entry.original_entry.filled_entry_price,
+            entry.requested_exit_price,
+            "requested exit price",
+        )
+        cls._require_aware_datetime(entry.requested_at, "requested_at")
+        if entry.requested_at < entry.original_entry.filled_at:
+            raise ValueError("close request timestamp precedes entry fill")
+
+    @classmethod
+    def _validate_requested_stop_loss_entry(
+        cls,
+        entry: RequestedStopLossEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._validate_filled_entry(
+            entry.original_entry,
+            expected_entry_id=(
+                None
+                if expected_entry_id is None
+                else expected_entry_id.with_type(EntryIdType.FILLED_ENTRY)
+            ),
+        )
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.REQUESTED_STOP_LOSS_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        if entry.entry_id != entry.original_entry.entry_id.with_type(
+            EntryIdType.REQUESTED_STOP_LOSS_ENTRY
+        ):
+            raise ValueError("requested stop-loss id does not match original entry id")
+        planned_stop_loss_price = entry.original_entry.planned_stop_loss_price
+        if planned_stop_loss_price is None:
+            raise ValueError("stop-loss request requires an original planned stop-loss price")
+        if entry.requested_stop_loss_exit_price != planned_stop_loss_price:
+            raise ValueError("requested stop-loss exit price differs from planned stop loss")
+        cls._require_positive_money(
+            entry.requested_stop_loss_exit_price,
+            "requested stop-loss exit price",
+        )
+        cls._require_aware_datetime(entry.requested_at, "requested_at")
+        if entry.requested_at < entry.original_entry.filled_at:
+            raise ValueError("stop-loss request timestamp precedes entry fill")
+
+    @classmethod
+    def _validate_filled_stop_loss_entry(
+        cls,
+        entry: FilledStopLossEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._validate_requested_stop_loss_entry(
+            entry.requested,
+            expected_entry_id=(
+                None
+                if expected_entry_id is None
+                else expected_entry_id.with_type(EntryIdType.REQUESTED_STOP_LOSS_ENTRY)
+            ),
+        )
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.FILLED_STOP_LOSS_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        if entry.entry_id != entry.requested.entry_id.with_type(
+            EntryIdType.FILLED_STOP_LOSS_ENTRY
+        ):
+            raise ValueError("filled stop-loss id does not match stop-loss request id")
+        cls._require_aware_datetime(entry.filled_at, "filled_at")
+        if entry.filled_at < entry.requested.requested_at:
+            raise ValueError("stop-loss fill timestamp precedes stop-loss request")
+        cls._require_positive_money(
+            entry.filled_stop_loss_exit_price,
+            "filled stop-loss exit price",
+        )
+        cls._require_same_currency(
+            entry.requested.requested_stop_loss_exit_price,
+            entry.filled_stop_loss_exit_price,
+            "filled stop-loss exit price",
+        )
+        cls._require_positive_money(
+            entry.planned_rebuild_trigger_price,
+            "planned rebuild trigger price",
+        )
+        cls._require_same_currency(
+            entry.requested.requested_stop_loss_exit_price,
+            entry.planned_rebuild_trigger_price,
+            "planned rebuild trigger price",
+        )
+
+    @classmethod
+    def _validate_sealed_entry(
+        cls,
+        entry: SealedEntry,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        cls._require_entry_id(
+            entry.entry_id,
+            EntryIdType.SEALED_ENTRY,
+            expected_entry_id=expected_entry_id,
+        )
+        cls._require_aware_datetime(entry.sealed_at, "sealed_at")
+
+    @staticmethod
+    def _require_entry_id(
+        entry_id: EntryId,
+        entry_type: EntryIdType,
+        *,
+        expected_entry_id: EntryId | None,
+    ) -> None:
+        if entry_id.entry_type != entry_type:
+            raise ValueError(f"entry id type must be {entry_type.value}")
+        if expected_entry_id is not None and entry_id != expected_entry_id.with_type(entry_type):
+            raise ValueError("entry id does not match expected slot identity")
+
+    @staticmethod
+    def _same_entry_slot(left: EntryId, right: EntryId) -> bool:
+        return (
+            left.cycle_id == right.cycle_id
+            and left.layer_number == right.layer_number
+            and left.slot_number == right.slot_number
+        )
+
+    @staticmethod
+    def _require_positive_decimal(value: Decimal, name: str) -> None:
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+
+    @staticmethod
+    def _require_positive_money(value: Money, name: str) -> None:
+        if value.amount <= 0:
+            raise ValueError(f"{name} must be positive")
+
+    @staticmethod
+    def _require_same_currency(reference: Money, value: Money, name: str) -> None:
+        if value.currency != reference.currency:
+            raise ValueError(f"{name} currency does not match")
+
+    @staticmethod
+    def _require_aware_datetime(value: AwareDatetime, name: str) -> None:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{name} must be timezone-aware")
+
+    @staticmethod
+    def _fill_shifted_money(
+        value: Money | None,
+        *,
+        requested_entry_price: Money,
+        filled_entry_price: Money,
+    ) -> Money | None:
+        if value is None:
+            return None
+        fill_delta = (filled_entry_price - requested_entry_price).amount
+        if not fill_delta:
+            return value
+        return Money.of(value.amount + fill_delta, value.currency)
 
 
 @dataclass(slots=True)
@@ -318,6 +614,9 @@ class Layer:
     )
 
     def __post_init__(self) -> None:
+        if self.base_units <= 0:
+            raise ValueError("layer base units must be positive")
+        self._validate_slot_numbers()
         missing_slot_numbers = set(self._slots) - set(self._build_count_generators)
         for slot_number in missing_slot_numbers:
             self._build_count_generators[slot_number] = IntegerIdGenerator(
@@ -326,6 +625,13 @@ class Layer:
         unknown_slot_numbers = set(self._build_count_generators) - set(self._slots)
         if unknown_slot_numbers:
             raise ValueError("build count generator references unknown slot")
+        for slot_number, generator in self._build_count_generators.items():
+            if generator.next_value < 1:
+                raise ValueError("build count generator must be positive")
+            entry_build_count = self._entry_build_count(self._slots[slot_number])
+            assigned_build_count = generator.next_value - 1
+            if entry_build_count and assigned_build_count != entry_build_count:
+                raise ValueError("slot entry build count does not match layer build count")
 
     @classmethod
     def create(
@@ -357,15 +663,19 @@ class Layer:
         unknown_slot_numbers = set(count_map) - set(slot_map)
         if unknown_slot_numbers:
             raise ValueError("build count references unknown slot")
+        generator_map: dict[int, IntegerIdGenerator] = {}
+        for slot_number, slot in slot_map.items():
+            entry_build_count = cls._entry_build_count(slot)
+            restored_build_count = count_map.get(slot_number, entry_build_count)
+            if restored_build_count < 0:
+                raise ValueError("build count must not be negative")
+            if entry_build_count and restored_build_count != entry_build_count:
+                raise ValueError("slot entry build count does not match restored build count")
+            generator_map[slot_number] = IntegerIdGenerator(restored_build_count + 1)
         return cls(
             base_units=base_units,
             _slots=slot_map,
-            _build_count_generators={
-                slot_number: IntegerIdGenerator(
-                    max(count_map.get(slot_number, 0), cls._entry_build_count(slot)) + 1
-                )
-                for slot_number, slot in slot_map.items()
-            },
+            _build_count_generators=generator_map,
         )
 
     @property
@@ -415,6 +725,31 @@ class Layer:
         if entry is None:
             return 0
         return entry.entry_id.build_count
+
+    def validate_entries(self, *, cycle_id: CycleId, layer_number: int) -> None:
+        """Validate entry identities for this layer position."""
+        self._validate_slot_numbers()
+        for slot_number, slot in self._slots.items():
+            entry = slot.entry
+            if entry is None:
+                continue
+            expected_entry_id = EntryId(
+                cycle_id=cycle_id,
+                layer_number=layer_number,
+                slot_number=slot_number,
+                build_count=entry.entry_id.build_count,
+            )
+            slot.validate_entry(expected_entry_id=expected_entry_id)
+            assigned_build_count = self._build_count_generators[slot_number].next_value - 1
+            if entry.entry_id.build_count != assigned_build_count:
+                raise ValueError("slot entry build count does not match layer build count")
+
+    def _validate_slot_numbers(self) -> None:
+        if not self._slots:
+            raise ValueError("layer must contain slots")
+        expected_slot_numbers = set(range(max(self._slots) + 1))
+        if set(self._slots) != expected_slot_numbers:
+            raise ValueError("layer slots must be contiguous from R0")
 
     @property
     def r0(self) -> Slot:
@@ -474,6 +809,9 @@ class Grid:
 
     _layers: dict[int, Layer]
 
+    def __post_init__(self) -> None:
+        self._validate_layer_numbers()
+
     @classmethod
     def create(cls, *, base_units: Decimal, max_retracements: int) -> Grid:
         """Create a grid with one empty L1 layer."""
@@ -509,6 +847,7 @@ class Grid:
             max_retracements=max_retracements,
         )
         self._layers[layer_number] = layer
+        self._validate_layer_numbers()
         return layer
 
     def layer_number(self, layer: Layer) -> int:
@@ -617,6 +956,7 @@ class Grid:
             if not self._layers[top_layer_number].is_empty():
                 return
             del self._layers[top_layer_number]
+        self._validate_layer_numbers()
 
     def next_entry_id(self, *, cycle_id: CycleId, layer: Layer, slot: Slot) -> EntryId:
         """Return the next entry identifier for one slot."""
@@ -634,3 +974,16 @@ class Grid:
                 if slot.live_or_pending_close_entry() is entry:
                     return layer, slot
         return None
+
+    def validate_for_cycle(self, cycle_id: CycleId) -> None:
+        """Validate layer order and every slot entry for a cycle."""
+        self._validate_layer_numbers()
+        for layer_number, layer in self._layers.items():
+            layer.validate_entries(cycle_id=cycle_id, layer_number=layer_number)
+
+    def _validate_layer_numbers(self) -> None:
+        if not self._layers:
+            raise ValueError("grid must contain layers")
+        expected_layer_numbers = set(range(1, max(self._layers) + 1))
+        if set(self._layers) != expected_layer_numbers:
+            raise ValueError("grid layers must be contiguous from L1")

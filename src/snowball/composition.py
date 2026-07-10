@@ -89,7 +89,6 @@ class SnowballServiceContainer:
         self.take_profit_close_service = SnowballTakeProfitCloseService(
             self.config,
             self.pricing,
-            self.take_profit_planner,
             self.event_factory,
         )
         self.stop_loss_close_service = SnowballStopLossCloseService(
@@ -119,7 +118,6 @@ class SnowballServiceContainer:
             self.pricing,
             self.entry_service,
             self.grid_selector,
-            self.take_profit_planner,
             self.event_factory,
         )
         self.cycle_processor = SnowballCycleProcessor(

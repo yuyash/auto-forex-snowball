@@ -68,6 +68,7 @@ class SnowballStopLossCloseService:
                     self.stop_loss_planner.rebuild_trigger_price(
                         direction=cycle.direction,
                         original_entry_price=entry.filled_entry_price,
+                        planned_stop_loss_price=requested_stop_loss_exit_price,
                         stop_loss_exit_price=exit_price,
                         pip_size=pip_size,
                     )

@@ -130,36 +130,6 @@ class SnowballTakeProfitPlanner:
             return None
         return cycle_head
 
-    def sync_weighted_average_take_profits(self, layer: Layer) -> Money | None:
-        """Apply the current weighted-average TP to present counter slots."""
-        if self.config.counter.take_profit.mode != CounterTakeProfitMode.WEIGHTED_AVG:
-            return None
-        total_cost = Decimal("0")
-        total_units = Decimal("0")
-        currency = None
-        for slot in layer.slots:
-            reference_price = slot.reference_entry_price()
-            reference_units = slot.reference_filled_units()
-            if reference_price is None or reference_units is None:
-                continue
-            currency = reference_price.currency
-            total_cost += reference_price.amount * reference_units
-            total_units += reference_units
-        if total_units <= 0 or currency is None:
-            return None
-        take_profit_price = Money.of(total_cost / total_units, currency)
-        for slot in layer.slots:
-            if layer.retracement_count(slot) <= 0:
-                continue
-            filled_entry = slot.filled_entry
-            if filled_entry is not None:
-                slot.replace_reference_take_profit_price(take_profit_price)
-                continue
-            stop_loss_entry = slot.filled_stop_loss_entry
-            if stop_loss_entry is not None:
-                slot.replace_reference_take_profit_price(take_profit_price)
-        return take_profit_price
-
     def weighted_average_price(
         self,
         *,

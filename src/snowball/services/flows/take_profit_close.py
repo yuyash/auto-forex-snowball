@@ -13,7 +13,6 @@ from snowball.models.grid import Layer, Slot
 from snowball.models.state import Cycle
 from snowball.services.flows.event_factory import SnowballEventFactory
 from snowball.services.market_pricing import SnowballMarketPricing
-from snowball.services.policies.take_profit import SnowballTakeProfitPlanner
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +21,6 @@ class SnowballTakeProfitCloseService:
 
     config: SnowballConfig
     pricing: SnowballMarketPricing
-    take_profit_planner: SnowballTakeProfitPlanner
     event_factory: SnowballEventFactory
 
     def process_counter_take_profits(
@@ -64,7 +62,6 @@ class SnowballTakeProfitCloseService:
                 entry=entry,
                 exit_price=exit_price,
             )
-            self.take_profit_planner.sync_weighted_average_take_profits(layer)
             events.append(
                 self.event_factory.close_event(
                     cycle=cycle,

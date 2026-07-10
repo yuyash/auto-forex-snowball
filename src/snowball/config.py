@@ -30,6 +30,7 @@ from snowball.enums import (
     RebuildEntryPriceMode,
     RebuildStopLossMode,
     RebuildTakeProfitMode,
+    StopLossMode,
 )
 
 
@@ -37,7 +38,7 @@ from snowball.enums import (
 class PipProgressionConfig:
     """Pip-distance progression from a head value to a tail value."""
 
-    mode: IntervalMode = IntervalMode.ADDITIVE
+    mode: IntervalMode = IntervalMode.CONSTANT
     head_pips: Decimal = Decimal("30")
     tail_pips: Decimal = Decimal("14")
     flat_steps: int = 2
@@ -316,11 +317,19 @@ class StopLossProtectionConfig:
         )
 
 
+def _stop_loss_mode_value(value: Any) -> StopLossMode:
+    raw = str(value)
+    if raw in {mode.value for mode in IntervalMode}:
+        return StopLossMode.DISTANCE
+    return enum_value(StopLossMode, value)
+
+
 @dataclass(frozen=True, slots=True)
 class StopLossConfig:
     """Stop-loss placement for live Snowball entries."""
 
     enabled: bool = False
+    mode: StopLossMode = StopLossMode.AUTO
     distance: PipProgressionConfig = PipProgressionConfig(
         mode=IntervalMode.CONSTANT,
         head_pips=Decimal("50"),
@@ -335,25 +344,30 @@ class StopLossConfig:
         config = cls()
         if not values:
             return config
-        return replace(
-            config,
-            **parse_changes(
-                values,
-                enabled=bool_value,
-                distance=lambda value: PipProgressionConfig.from_mapping(
-                    value,
-                    default=config.distance,
-                ),
-                protect_highest_retracement=StopLossProtectionConfig.from_mapping,
+        changes = parse_changes(
+            values,
+            enabled=bool_value,
+            mode=_stop_loss_mode_value,
+            distance=lambda value: PipProgressionConfig.from_mapping(
+                value,
+                default=config.distance,
             ),
+            protect_highest_retracement=StopLossProtectionConfig.from_mapping,
         )
+        if "mode" in values and str(values["mode"]) in {mode.value for mode in IntervalMode}:
+            distance = changes.get("distance", config.distance)
+            changes["distance"] = replace(distance, mode=IntervalMode(str(values["mode"])))
+        if "mode" not in values and "distance" in values:
+            changes["mode"] = StopLossMode.DISTANCE
+        return replace(config, **changes)
 
     def validate(self, *, max_retracements_per_layer: int) -> None:
         """Validate stop-loss config."""
-        self.distance.validate(
-            manual_minimum=max_retracements_per_layer + 1,
-            name="stop_loss.distance",
-        )
+        if self.mode == StopLossMode.DISTANCE:
+            self.distance.validate(
+                manual_minimum=max_retracements_per_layer + 1,
+                name="stop_loss.distance",
+            )
         if self.protect_highest_retracement.from_retracement < 1:
             raise ValueError("stop_loss.protect_highest_retracement.from_retracement must be >= 1")
 
@@ -362,7 +376,7 @@ class StopLossConfig:
 class RebuildTriggerConfig:
     """Trigger price policy for stopped slots waiting for rebuild."""
 
-    entry_price_mode: RebuildEntryPriceMode = RebuildEntryPriceMode.ORIGINAL_ENTRY_PRICE
+    entry_price_mode: RebuildEntryPriceMode = RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
     buffer_pips: Decimal = Decimal("0")
 
     @classmethod

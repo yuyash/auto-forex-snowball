@@ -212,5 +212,5 @@ class SnowballMarketPricing:
             return False
         trigger = stop_loss_entry.planned_rebuild_trigger_price
         if direction == PositionSide.LONG:
-            return tick.ask >= trigger
-        return tick.bid <= trigger
+            return tick.bid >= trigger
+        return tick.ask <= trigger
