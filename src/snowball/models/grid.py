@@ -174,7 +174,7 @@ class Slot:
         self,
         *,
         requested_at: AwareDatetime,
-        requested_stop_loss_exit_price: Money,
+        planned_stop_loss_price: Money,
     ) -> FilledEntry:
         """Replace a live entry with a requested stop-loss close."""
         entry = self.filled_entry
@@ -182,7 +182,7 @@ class Slot:
             raise ValueError("slot has no live entry")
         requested = entry.stop_loss(
             requested_at=requested_at,
-            requested_stop_loss_exit_price=requested_stop_loss_exit_price,
+            planned_stop_loss_price=planned_stop_loss_price,
         )
         self._validate_entry(requested, expected_entry_id=entry.entry_id)
         self._entry = requested
@@ -192,9 +192,9 @@ class Slot:
         self,
         *,
         filled_at: AwareDatetime,
-        filled_stop_loss_exit_price: Money,
+        filled_stop_loss_price: Money,
         rebuildable: bool,
-        planned_rebuild_trigger_price: Money | None,
+        planned_rebuild_price: Money | None,
     ) -> FilledEntry:
         """Replace a requested stop-loss close with its filled state."""
         requested = self.requested_stop_loss_entry
@@ -204,9 +204,9 @@ class Slot:
             raise ValueError("stop-loss fill timestamp precedes stop-loss request")
         next_entry = requested.fill(
             filled_at=filled_at,
-            filled_stop_loss_exit_price=filled_stop_loss_exit_price,
+            filled_stop_loss_price=filled_stop_loss_price,
             rebuildable=rebuildable,
-            planned_rebuild_trigger_price=planned_rebuild_trigger_price,
+            planned_rebuild_price=planned_rebuild_price,
         )
         self._validate_entry(
             next_entry,
@@ -225,12 +225,12 @@ class Slot:
         original_id = stop_loss_entry.original_entry.entry_id
         if not self._same_entry_slot(entry.entry_id, original_id):
             raise ValueError("rebuilt entry does not belong to the stopped slot")
-        if entry.entry_id.build_count <= original_id.build_count:
-            raise ValueError("rebuilt entry build count must advance")
+        if entry.entry_id.build_number <= original_id.build_number:
+            raise ValueError("rebuilt entry build number must advance")
         if entry.requested_at < stop_loss_entry.filled_at:
             raise ValueError("rebuild request timestamp precedes stop-loss fill")
         self._require_same_currency(
-            stop_loss_entry.planned_rebuild_trigger_price,
+            stop_loss_entry.planned_rebuild_price,
             entry.requested_entry_price,
             "rebuilt entry price",
         )
@@ -470,11 +470,11 @@ class Slot:
         planned_stop_loss_price = entry.original_entry.planned_stop_loss_price
         if planned_stop_loss_price is None:
             raise ValueError("stop-loss request requires an original planned stop-loss price")
-        if entry.requested_stop_loss_exit_price != planned_stop_loss_price:
-            raise ValueError("requested stop-loss exit price differs from planned stop loss")
+        if entry.planned_stop_loss_price != planned_stop_loss_price:
+            raise ValueError("stop-loss request price differs from planned stop loss")
         cls._require_positive_money(
-            entry.requested_stop_loss_exit_price,
-            "requested stop-loss exit price",
+            entry.planned_stop_loss_price,
+            "planned stop-loss price",
         )
         cls._require_aware_datetime(entry.requested_at, "requested_at")
         if entry.requested_at < entry.original_entry.filled_at:
@@ -508,22 +508,22 @@ class Slot:
         if entry.filled_at < entry.requested.requested_at:
             raise ValueError("stop-loss fill timestamp precedes stop-loss request")
         cls._require_positive_money(
-            entry.filled_stop_loss_exit_price,
-            "filled stop-loss exit price",
+            entry.filled_stop_loss_price,
+            "filled stop-loss price",
         )
         cls._require_same_currency(
-            entry.requested.requested_stop_loss_exit_price,
-            entry.filled_stop_loss_exit_price,
-            "filled stop-loss exit price",
+            entry.requested.planned_stop_loss_price,
+            entry.filled_stop_loss_price,
+            "filled stop-loss price",
         )
         cls._require_positive_money(
-            entry.planned_rebuild_trigger_price,
-            "planned rebuild trigger price",
+            entry.planned_rebuild_price,
+            "planned rebuild price",
         )
         cls._require_same_currency(
-            entry.requested.requested_stop_loss_exit_price,
-            entry.planned_rebuild_trigger_price,
-            "planned rebuild trigger price",
+            entry.requested.planned_stop_loss_price,
+            entry.planned_rebuild_price,
+            "planned rebuild price",
         )
 
     @classmethod
@@ -607,7 +607,7 @@ class Layer:
 
     base_units: Decimal
     _slots: dict[int, Slot] = field(default_factory=dict)
-    _build_count_generators: dict[int, IntegerIdGenerator] = field(
+    _build_number_generators: dict[int, IntegerIdGenerator] = field(
         default_factory=dict,
         repr=False,
         compare=False,
@@ -617,21 +617,21 @@ class Layer:
         if self.base_units <= 0:
             raise ValueError("layer base units must be positive")
         self._validate_slot_numbers()
-        missing_slot_numbers = set(self._slots) - set(self._build_count_generators)
+        missing_slot_numbers = set(self._slots) - set(self._build_number_generators)
         for slot_number in missing_slot_numbers:
-            self._build_count_generators[slot_number] = IntegerIdGenerator(
-                self._entry_build_count(self._slots[slot_number]) + 1
+            self._build_number_generators[slot_number] = IntegerIdGenerator(
+                self._entry_build_number(self._slots[slot_number]) + 1
             )
-        unknown_slot_numbers = set(self._build_count_generators) - set(self._slots)
+        unknown_slot_numbers = set(self._build_number_generators) - set(self._slots)
         if unknown_slot_numbers:
-            raise ValueError("build count generator references unknown slot")
-        for slot_number, generator in self._build_count_generators.items():
+            raise ValueError("build number generator references unknown slot")
+        for slot_number, generator in self._build_number_generators.items():
             if generator.next_value < 1:
-                raise ValueError("build count generator must be positive")
-            entry_build_count = self._entry_build_count(self._slots[slot_number])
-            assigned_build_count = generator.next_value - 1
-            if entry_build_count and assigned_build_count != entry_build_count:
-                raise ValueError("slot entry build count does not match layer build count")
+                raise ValueError("build number generator must be positive")
+            entry_build_number = self._entry_build_number(self._slots[slot_number])
+            assigned_build_number = generator.next_value - 1
+            if entry_build_number and assigned_build_number != entry_build_number:
+                raise ValueError("slot entry build number does not match layer build number")
 
     @classmethod
     def create(
@@ -644,7 +644,7 @@ class Layer:
         return cls(
             base_units=base_units,
             _slots={slot_number: Slot() for slot_number in range(max_retracements + 1)},
-            _build_count_generators={
+            _build_number_generators={
                 slot_number: IntegerIdGenerator() for slot_number in range(max_retracements + 1)
             },
         )
@@ -655,27 +655,27 @@ class Layer:
         *,
         base_units: Decimal,
         slots: Mapping[int, Slot],
-        build_counts: Mapping[int, int] | None = None,
+        build_numbers: Mapping[int, int] | None = None,
     ) -> Layer:
         """Rebuild a layer from previously serialized slots."""
         slot_map = dict(slots)
-        count_map = dict(build_counts or {})
-        unknown_slot_numbers = set(count_map) - set(slot_map)
+        number_map = dict(build_numbers or {})
+        unknown_slot_numbers = set(number_map) - set(slot_map)
         if unknown_slot_numbers:
-            raise ValueError("build count references unknown slot")
+            raise ValueError("build number references unknown slot")
         generator_map: dict[int, IntegerIdGenerator] = {}
         for slot_number, slot in slot_map.items():
-            entry_build_count = cls._entry_build_count(slot)
-            restored_build_count = count_map.get(slot_number, entry_build_count)
-            if restored_build_count < 0:
-                raise ValueError("build count must not be negative")
-            if entry_build_count and restored_build_count != entry_build_count:
-                raise ValueError("slot entry build count does not match restored build count")
-            generator_map[slot_number] = IntegerIdGenerator(restored_build_count + 1)
+            entry_build_number = cls._entry_build_number(slot)
+            restored_build_number = number_map.get(slot_number, entry_build_number)
+            if restored_build_number < 0:
+                raise ValueError("build number must not be negative")
+            if entry_build_number and restored_build_number != entry_build_number:
+                raise ValueError("slot entry build number does not match restored build number")
+            generator_map[slot_number] = IntegerIdGenerator(restored_build_number + 1)
         return cls(
             base_units=base_units,
             _slots=slot_map,
-            _build_count_generators=generator_map,
+            _build_number_generators=generator_map,
         )
 
     @property
@@ -703,28 +703,28 @@ class Layer:
         """Return the R number derived from a slot's position in this layer."""
         return self.slot_number(slot)
 
-    def build_count(self, slot: Slot) -> int:
-        """Return the latest build count assigned to this slot."""
+    def build_number(self, slot: Slot) -> int:
+        """Return the latest build number assigned to this slot."""
         slot_number = self.slot_number(slot)
-        return self._build_count_generators[slot_number].next_value - 1
+        return self._build_number_generators[slot_number].next_value - 1
 
-    def build_counts(self) -> dict[int, int]:
-        """Return latest build counts keyed by slot number."""
+    def build_numbers(self) -> dict[int, int]:
+        """Return latest build numbers keyed by slot number."""
         return {
-            slot_number: self._build_count_generators[slot_number].next_value - 1
+            slot_number: self._build_number_generators[slot_number].next_value - 1
             for slot_number in sorted(self._slots)
         }
 
-    def next_build_count(self, slot: Slot) -> int:
-        """Return the next build count for this slot."""
-        return self._build_count_generators[self.slot_number(slot)].next()
+    def next_build_number(self, slot: Slot) -> int:
+        """Return the next build number for this slot."""
+        return self._build_number_generators[self.slot_number(slot)].next()
 
     @staticmethod
-    def _entry_build_count(slot: Slot) -> int:
+    def _entry_build_number(slot: Slot) -> int:
         entry = slot.entry
         if entry is None:
             return 0
-        return entry.entry_id.build_count
+        return entry.entry_id.build_number
 
     def validate_entries(self, *, cycle_id: CycleId, layer_number: int) -> None:
         """Validate entry identities for this layer position."""
@@ -737,12 +737,12 @@ class Layer:
                 cycle_id=cycle_id,
                 layer_number=layer_number,
                 slot_number=slot_number,
-                build_count=entry.entry_id.build_count,
+                build_number=entry.entry_id.build_number,
             )
             slot.validate_entry(expected_entry_id=expected_entry_id)
-            assigned_build_count = self._build_count_generators[slot_number].next_value - 1
-            if entry.entry_id.build_count != assigned_build_count:
-                raise ValueError("slot entry build count does not match layer build count")
+            assigned_build_number = self._build_number_generators[slot_number].next_value - 1
+            if entry.entry_id.build_number != assigned_build_number:
+                raise ValueError("slot entry build number does not match layer build number")
 
     def _validate_slot_numbers(self) -> None:
         if not self._slots:
@@ -964,7 +964,7 @@ class Grid:
             cycle_id=cycle_id,
             layer_number=self.layer_number(layer),
             slot_number=layer.slot_number(slot),
-            build_count=layer.next_build_count(slot),
+            build_number=layer.next_build_number(slot),
         )
 
     def find_entry_slot(self, entry: FilledEntry) -> tuple[Layer, Slot] | None:

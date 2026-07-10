@@ -128,14 +128,14 @@ class FilledEntry:
     def stop_loss(
         self,
         *,
-        requested_stop_loss_exit_price: Money,
+        planned_stop_loss_price: Money,
         requested_at: AwareDatetime,
     ) -> RequestedStopLossEntry:
         """Return a requested stop-loss close for this entry."""
         return RequestedStopLossEntry(
             entry_id=self.entry_id.with_type(EntryIdType.REQUESTED_STOP_LOSS_ENTRY),
             original_entry=self,
-            requested_stop_loss_exit_price=requested_stop_loss_exit_price,
+            planned_stop_loss_price=planned_stop_loss_price,
             requested_at=requested_at,
         )
 
@@ -208,13 +208,13 @@ class RequestedStopLossEntry:
     Attributes:
         entry_id: Stable entry identifier for the requested stop-loss state.
         original_entry: FilledEntry state before the stop-loss close.
-        requested_stop_loss_exit_price: Price used when requesting the stop-loss close.
+        planned_stop_loss_price: Planned stop-loss price used when requesting the close.
         requested_at: Tick timestamp when the stop-loss close was requested.
     """
 
     entry_id: EntryId
     original_entry: FilledEntry
-    requested_stop_loss_exit_price: Money
+    planned_stop_loss_price: Money
     requested_at: AwareDatetime
 
     def __post_init__(self) -> None:
@@ -239,30 +239,25 @@ class RequestedStopLossEntry:
         """Return the original planned take-profit price of the stop-loss request."""
         return self.original_entry.planned_take_profit_price
 
-    @property
-    def planned_stop_loss_price(self) -> Money | None:
-        """Return the original planned stop-loss price of the stop-loss request."""
-        return self.original_entry.planned_stop_loss_price
-
     def fill(
         self,
         *,
         filled_at: AwareDatetime,
-        filled_stop_loss_exit_price: Money,
+        filled_stop_loss_price: Money,
         rebuildable: bool,
-        planned_rebuild_trigger_price: Money | None,
+        planned_rebuild_price: Money | None,
     ) -> FilledStopLossEntry | SealedEntry:
         """Return the slot state after the stop-loss close is filled."""
         if not rebuildable:
             return self.original_entry.seal(sealed_at=filled_at)
-        if planned_rebuild_trigger_price is None:
-            raise ValueError("rebuildable stop loss requires rebuild trigger price")
+        if planned_rebuild_price is None:
+            raise ValueError("rebuildable stop loss requires planned rebuild price")
         return FilledStopLossEntry(
             entry_id=self.entry_id.with_type(EntryIdType.FILLED_STOP_LOSS_ENTRY),
             requested=self,
             filled_at=filled_at,
-            filled_stop_loss_exit_price=filled_stop_loss_exit_price,
-            planned_rebuild_trigger_price=planned_rebuild_trigger_price,
+            filled_stop_loss_price=filled_stop_loss_price,
+            planned_rebuild_price=planned_rebuild_price,
         )
 
 
@@ -274,15 +269,15 @@ class FilledStopLossEntry:
         entry_id: Stable entry identifier for the filled stop-loss state.
         requested: Stop-loss request that produced this fill.
         filled_at: Broker fill timestamp for the stop-loss close.
-        filled_stop_loss_exit_price: Actual broker fill price at the stop-loss close.
-        planned_rebuild_trigger_price: Price that must be revisited before rebuilding this slot.
+        filled_stop_loss_price: Actual broker fill price at the stop-loss close.
+        planned_rebuild_price: Price that must be reached before rebuilding this slot.
     """
 
     entry_id: EntryId
     requested: RequestedStopLossEntry
     filled_at: AwareDatetime
-    filled_stop_loss_exit_price: Money
-    planned_rebuild_trigger_price: Money
+    filled_stop_loss_price: Money
+    planned_rebuild_price: Money
 
     def __post_init__(self) -> None:
         object.__setattr__(

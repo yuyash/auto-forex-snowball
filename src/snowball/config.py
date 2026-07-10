@@ -373,15 +373,15 @@ class StopLossConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class RebuildTriggerConfig:
-    """Trigger price policy for stopped slots waiting for rebuild."""
+class RebuildPriceConfig:
+    """Planned rebuild price policy for stopped slots waiting for rebuild."""
 
     entry_price_mode: RebuildEntryPriceMode = RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
     buffer_pips: Decimal = Decimal("0")
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildTriggerConfig:
-        """Build rebuild trigger config from nested values."""
+    def from_mapping(cls, values: Mapping[str, Any]) -> RebuildPriceConfig:
+        """Build rebuild price config from nested values."""
         config = cls()
         if not values:
             return config
@@ -471,7 +471,7 @@ class RebuildConfig:
     """Rebuild behavior for stop-loss-closed slots."""
 
     enabled: bool = True
-    trigger: RebuildTriggerConfig = RebuildTriggerConfig()
+    price: RebuildPriceConfig = RebuildPriceConfig()
     stop_loss: RebuildStopLossConfig = RebuildStopLossConfig()
     take_profit: RebuildTakeProfitConfig = RebuildTakeProfitConfig()
 
@@ -486,7 +486,7 @@ class RebuildConfig:
             **parse_changes(
                 values,
                 enabled=bool_value,
-                trigger=RebuildTriggerConfig.from_mapping,
+                price=RebuildPriceConfig.from_mapping,
                 stop_loss=RebuildStopLossConfig.from_mapping,
                 take_profit=RebuildTakeProfitConfig.from_mapping,
             ),
@@ -494,8 +494,8 @@ class RebuildConfig:
 
     def validate(self, *, max_retracements_per_layer: int) -> None:
         """Validate rebuild config."""
-        if self.trigger.buffer_pips < 0:
-            raise ValueError("rebuild.trigger.buffer_pips must not be negative")
+        if self.price.buffer_pips < 0:
+            raise ValueError("rebuild.price.buffer_pips must not be negative")
         self.stop_loss.validate(max_retracements_per_layer=max_retracements_per_layer)
         self.take_profit.validate(max_retracements_per_layer=max_retracements_per_layer)
 

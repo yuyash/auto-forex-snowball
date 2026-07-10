@@ -6,9 +6,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from core import (
+    Currency,
     Money,
     StrategyContext,
-    StrategyExecutionReport,
+    StrategyExecutionResponse,
     StrategyResult,
     StrategyState,
     Tick,
@@ -54,7 +55,7 @@ class SnowballRuntime:
 
     def on_execution_reports(
         self,
-        reports: Sequence[StrategyExecutionReport],
+        reports: Sequence[StrategyExecutionResponse],
         context: StrategyContext,
     ) -> StrategyState:
         """Apply broker execution reports to Snowball state."""
@@ -71,7 +72,7 @@ class SnowballRuntime:
     def _apply_entry_fill(
         self,
         *,
-        report: StrategyExecutionReport,
+        report: StrategyExecutionResponse,
         state: SnowballState,
     ) -> None:
         order = report.order
@@ -102,7 +103,7 @@ class SnowballRuntime:
     def _apply_close_fill(
         self,
         *,
-        report: StrategyExecutionReport,
+        report: StrategyExecutionResponse,
         state: SnowballState,
     ) -> None:
         order = report.order
@@ -122,7 +123,7 @@ class SnowballRuntime:
     def _apply_requested_close_fill(
         self,
         *,
-        report: StrategyExecutionReport,
+        report: StrategyExecutionResponse,
         state: SnowballState,
         entry_id: str,
     ) -> None:
@@ -139,7 +140,7 @@ class SnowballRuntime:
     def _apply_stop_loss_fill(
         self,
         *,
-        report: StrategyExecutionReport,
+        report: StrategyExecutionResponse,
         state: SnowballState,
         entry_id: str,
     ) -> None:
@@ -149,11 +150,11 @@ class SnowballRuntime:
             return
         metadata = report.event.metadata
         rebuildable = self._metadata_bool(metadata.get("rebuildable", False))
-        raw_trigger_price = metadata.get("planned_rebuild_trigger_price")
-        planned_rebuild_trigger_price = (
+        raw_rebuild_price = metadata.get("planned_rebuild_price")
+        planned_rebuild_price = (
             None
-            if raw_trigger_price in (None, "")
-            else Money.of(str(raw_trigger_price), fill_price.currency)
+            if raw_rebuild_price in (None, "")
+            else self._money_from_metadata(raw_rebuild_price, fallback_currency=fill_price.currency)
         )
         for cycle in state.cycles:
             for layer in cycle.grid.layers:
@@ -163,9 +164,9 @@ class SnowballRuntime:
                         continue
                     slot.fill_stop_loss(
                         filled_at=report.event.timestamp,
-                        filled_stop_loss_exit_price=fill_price,
+                        filled_stop_loss_price=fill_price,
                         rebuildable=rebuildable,
-                        planned_rebuild_trigger_price=planned_rebuild_trigger_price,
+                        planned_rebuild_price=planned_rebuild_price,
                     )
                     cycle.refresh_status()
                     return
@@ -175,3 +176,13 @@ class SnowballRuntime:
         if isinstance(value, bool):
             return value
         return str(value).lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def _money_from_metadata(value: object, *, fallback_currency: Currency) -> Money:
+        if isinstance(value, Money):
+            return value
+        text = str(value)
+        parts = text.split()
+        if len(parts) == 2:
+            return Money.of(parts[0], parts[1])
+        return Money.of(text, fallback_currency)

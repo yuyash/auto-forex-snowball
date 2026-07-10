@@ -98,9 +98,9 @@ class SnowballStateSerializer:
     def _layer_to_mapping(cls, layer: Layer) -> dict[str, Any]:
         return {
             "base_units": str(layer.base_units),
-            "build_counts": {
-                str(slot_number): build_count
-                for slot_number, build_count in layer.build_counts().items()
+            "build_numbers": {
+                str(slot_number): build_number
+                for slot_number, build_number in layer.build_numbers().items()
             },
             "slots": {
                 str(layer.slot_number(slot)): cls._slot_to_mapping(slot) for slot in layer.slots
@@ -112,18 +112,18 @@ class SnowballStateSerializer:
         slots = data["slots"]
         if not isinstance(slots, Mapping):
             raise ValueError("layer slots must be a mapping")
-        build_counts = data["build_counts"]
-        if not isinstance(build_counts, Mapping):
-            raise ValueError("layer build counts must be a mapping")
+        build_numbers = data["build_numbers"]
+        if not isinstance(build_numbers, Mapping):
+            raise ValueError("layer build numbers must be a mapping")
         return Layer.from_slots(
             base_units=Decimal(str(data["base_units"])),
             slots={
                 int(slot_number): cls._slot_from_mapping(item)
                 for slot_number, item in slots.items()
             },
-            build_counts={
-                int(slot_number): int(build_count)
-                for slot_number, build_count in build_counts.items()
+            build_numbers={
+                int(slot_number): int(build_number)
+                for slot_number, build_number in build_numbers.items()
             },
         )
 
@@ -267,7 +267,7 @@ class SnowballStateSerializer:
             "cycle_id": entry_id.cycle_id,
             "layer_number": entry_id.layer_number,
             "slot_number": entry_id.slot_number,
-            "build_count": entry_id.build_count,
+            "build_number": entry_id.build_number,
             "entry_type": entry_id.entry_type.value,
         }
 
@@ -277,7 +277,7 @@ class SnowballStateSerializer:
             cycle_id=int(data["cycle_id"]),
             layer_number=int(data["layer_number"]),
             slot_number=int(data["slot_number"]),
-            build_count=int(data["build_count"]),
+            build_number=int(data["build_number"]),
             entry_type=EntryIdType(data["entry_type"]),
         )
 
@@ -350,8 +350,8 @@ class SnowballStateSerializer:
         return {
             "entry_id": cls._entry_id_to_mapping(entry.entry_id),
             "original_entry": cls._filled_entry_to_mapping(entry.original_entry),
-            "requested_stop_loss_exit_price": cls._money_to_mapping(
-                entry.requested_stop_loss_exit_price,
+            "planned_stop_loss_price": cls._money_to_mapping(
+                entry.planned_stop_loss_price,
             ),
             "requested_at": entry.requested_at.isoformat(),
         }
@@ -364,8 +364,8 @@ class SnowballStateSerializer:
         return RequestedStopLossEntry(
             entry_id=cls._entry_id_from_mapping(data["entry_id"]),
             original_entry=cls._filled_entry_from_mapping(data["original_entry"]),
-            requested_stop_loss_exit_price=cls._money_from_mapping(
-                data["requested_stop_loss_exit_price"],
+            planned_stop_loss_price=cls._money_from_mapping(
+                data["planned_stop_loss_price"],
             ),
             requested_at=cls._aware_datetime(data["requested_at"]),
         )
@@ -379,11 +379,11 @@ class SnowballStateSerializer:
             **cls._requested_stop_loss_entry_to_mapping(entry.requested),
             "filled_stop_loss_entry_id": cls._entry_id_to_mapping(entry.entry_id),
             "filled_at": entry.filled_at.isoformat(),
-            "filled_stop_loss_exit_price": cls._money_to_mapping(
-                entry.filled_stop_loss_exit_price,
+            "filled_stop_loss_price": cls._money_to_mapping(
+                entry.filled_stop_loss_price,
             ),
-            "planned_rebuild_trigger_price": cls._money_to_mapping(
-                entry.planned_rebuild_trigger_price,
+            "planned_rebuild_price": cls._money_to_mapping(
+                entry.planned_rebuild_price,
             ),
         }
 
@@ -397,11 +397,11 @@ class SnowballStateSerializer:
             entry_id=cls._entry_id_from_mapping(data["filled_stop_loss_entry_id"]),
             requested=requested,
             filled_at=cls._aware_datetime(data["filled_at"]),
-            filled_stop_loss_exit_price=cls._money_from_mapping(
-                data["filled_stop_loss_exit_price"],
+            filled_stop_loss_price=cls._money_from_mapping(
+                data["filled_stop_loss_price"],
             ),
-            planned_rebuild_trigger_price=cls._money_from_mapping(
-                data["planned_rebuild_trigger_price"],
+            planned_rebuild_price=cls._money_from_mapping(
+                data["planned_rebuild_price"],
             ),
         )
 

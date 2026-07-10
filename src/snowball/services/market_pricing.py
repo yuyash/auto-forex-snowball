@@ -200,17 +200,17 @@ class SnowballMarketPricing:
             return Money.of(entry_price.amount - distance, entry_price.currency)
         return Money.of(entry_price.amount + distance, entry_price.currency)
 
-    def rebuild_trigger_hit(
+    def rebuild_price_hit(
         self,
         *,
         stop_loss_entry: FilledStopLossEntry,
         direction: PositionSide,
         tick: Tick,
     ) -> bool:
-        """Return True when price has reached the rebuild trigger."""
+        """Return True when price has reached the planned rebuild price."""
         if tick.timestamp <= stop_loss_entry.filled_at:
             return False
-        trigger = stop_loss_entry.planned_rebuild_trigger_price
+        rebuild_price = stop_loss_entry.planned_rebuild_price
         if direction == PositionSide.LONG:
-            return tick.bid >= trigger
-        return tick.ask <= trigger
+            return tick.bid >= rebuild_price
+        return tick.ask <= rebuild_price

@@ -17,7 +17,7 @@ from snowball.services.market_pricing import SnowballMarketPricing
 
 @dataclass(frozen=True, slots=True)
 class SnowballStopLossPlanner:
-    """Plan stop-loss and rebuild-trigger prices."""
+    """Plan stop-loss and rebuild prices."""
 
     config: SnowballConfig
     calculator: SnowballCalculator
@@ -136,7 +136,7 @@ class SnowballStopLossPlanner:
             )
         return None
 
-    def rebuild_trigger_price(
+    def planned_rebuild_price(
         self,
         *,
         direction: PositionSide,
@@ -145,19 +145,19 @@ class SnowballStopLossPlanner:
         stop_loss_exit_price: Money,
         pip_size: Decimal,
     ) -> Money:
-        """Return the price that must be revisited before rebuilding a stopped slot."""
+        """Return the planned price for rebuilding a stopped slot."""
         if (
-            self.config.rebuild.trigger.entry_price_mode
+            self.config.rebuild.price.entry_price_mode
             == RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
         ):
-            trigger = planned_stop_loss_price or stop_loss_exit_price
-            buffer_pips = self.config.rebuild.trigger.buffer_pips
+            base_price = planned_stop_loss_price or stop_loss_exit_price
+            buffer_pips = self.config.rebuild.price.buffer_pips
         else:
-            trigger = original_entry_price
+            base_price = original_entry_price
             buffer_pips = Decimal("0")
         return self.pricing.directional_buffer_price(
             direction=direction,
-            price=trigger,
+            price=base_price,
             buffer_pips=buffer_pips,
             pip_size=pip_size,
         )

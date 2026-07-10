@@ -13,7 +13,7 @@ from core import (
     OrderStatus,
     PositionSide,
     StrategyContext,
-    StrategyExecutionReport,
+    StrategyExecutionResponse,
     StrategyParameters,
     TaskType,
     Tick,
@@ -92,7 +92,7 @@ class TestSnowballEngine:
 
     def test_entry_transition_methods_create_slot_states(self) -> None:
         requested = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -126,14 +126,14 @@ class TestSnowballEngine:
         assert sealed.unseal() is None
 
         requested_stop_loss = filled.stop_loss(
-            requested_stop_loss_exit_price=Money.of("149.90", "JPY"),
+            planned_stop_loss_price=Money.of("149.90", "JPY"),
             requested_at=datetime(2026, 1, 1, 0, 0, 4, tzinfo=UTC),
         )
         stop_loss_entry = requested_stop_loss.fill(
             filled_at=datetime(2026, 1, 1, 0, 0, 5, tzinfo=UTC),
-            filled_stop_loss_exit_price=Money.of("149.89", "JPY"),
+            filled_stop_loss_price=Money.of("149.89", "JPY"),
             rebuildable=True,
-            planned_rebuild_trigger_price=Money.of("150.00", "JPY"),
+            planned_rebuild_price=Money.of("150.00", "JPY"),
         )
         assert isinstance(requested_stop_loss, RequestedStopLossEntry)
         assert isinstance(stop_loss_entry, FilledStopLossEntry)
@@ -143,19 +143,19 @@ class TestSnowballEngine:
         assert stop_loss_entry.original_entry is filled
         with pytest.raises(FrozenInstanceError):
             requested_stop_loss.__setattr__(
-                "requested_stop_loss_exit_price",
+                "planned_stop_loss_price",
                 Money.of("149.80", "JPY"),
             )
         with pytest.raises(FrozenInstanceError):
             stop_loss_entry.__setattr__(
-                "planned_rebuild_trigger_price",
+                "planned_rebuild_price",
                 Money.of("150.10", "JPY"),
             )
 
     def test_non_refillable_close_stores_sealed_entry(self) -> None:
         closed_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
         requested_entry = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -186,7 +186,7 @@ class TestSnowballEngine:
     def test_slot_entry_is_read_only_from_outside(self) -> None:
         slot = Slot()
         requested = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -199,7 +199,7 @@ class TestSnowballEngine:
     def test_slot_rejects_entry_for_different_grid_position(self) -> None:
         slot = Slot()
         requested = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -213,13 +213,13 @@ class TestSnowballEngine:
                     cycle_id=1,
                     layer_number=1,
                     slot_number=0,
-                    build_count=1,
+                    build_number=1,
                 ),
             )
 
     def test_slot_rejects_filled_entry_with_inconsistent_price_shift(self) -> None:
         requested = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -243,7 +243,7 @@ class TestSnowballEngine:
 
     def test_cycle_rejects_restored_entry_for_different_slot_position(self) -> None:
         requested = RequestedEntry(
-            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_count=1),
+            entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_number=1),
             requested_units=Decimal("1000"),
             requested_entry_price=Money.of("150.00", "JPY"),
             requested_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -254,7 +254,7 @@ class TestSnowballEngine:
                 1: Layer.from_slots(
                     base_units=Decimal("1000"),
                     slots={0: Slot.restore(requested)},
-                    build_counts={0: 1},
+                    build_numbers={0: 1},
                 )
             }
         )
@@ -435,24 +435,21 @@ class TestSnowballEngine:
         assert stopped_event.close_reason == CloseReason.STOP_LOSS
         requested_stop_loss = pending_slot.requested_stop_loss_entry
         assert isinstance(requested_stop_loss, RequestedStopLossEntry)
-        assert requested_stop_loss.requested_stop_loss_exit_price == Money.of("149.92", "JPY")
+        assert requested_stop_loss.planned_stop_loss_price == Money.of("149.92", "JPY")
         assert stopped.state.cycles[0].active
 
         pending_slot.fill_stop_loss(
             filled_at=stop_tick.timestamp,
-            filled_stop_loss_exit_price=stopped_event.price,
+            filled_stop_loss_price=stopped_event.price,
             rebuildable=True,
-            planned_rebuild_trigger_price=Money.of(
-                stopped_event.metadata["planned_rebuild_trigger_price"],
-                "JPY",
-            ),
+            planned_rebuild_price=Money.of("149.92", "JPY"),
         )
         stopped.state.cycles[0].refresh_status()
         pending_entry = pending_slot.filled_stop_loss_entry
         assert pending_entry is not None
-        assert pending_entry.requested.requested_stop_loss_exit_price == Money.of("149.92", "JPY")
-        assert pending_entry.filled_stop_loss_exit_price == Money.of("149.90", "JPY")
-        assert pending_entry.planned_rebuild_trigger_price == Money.of("149.92", "JPY")
+        assert pending_entry.requested.planned_stop_loss_price == Money.of("149.92", "JPY")
+        assert pending_entry.filled_stop_loss_price == Money.of("149.90", "JPY")
+        assert pending_entry.planned_rebuild_price == Money.of("149.92", "JPY")
         assert pending_entry.original_entry is pending_entry.requested.original_entry
         assert stopped.state.cycles[0].pending
         restored_pending_entry = (
@@ -468,8 +465,8 @@ class TestSnowballEngine:
             restored_pending_entry.original_entry is restored_pending_entry.requested.original_entry
         )
         assert (
-            restored_pending_entry.planned_rebuild_trigger_price
-            == pending_entry.planned_rebuild_trigger_price
+            restored_pending_entry.planned_rebuild_price
+            == pending_entry.planned_rebuild_price
         )
 
         rebuilt = engine.process_tick(
@@ -482,9 +479,9 @@ class TestSnowballEngine:
         rebuilt_entry = rebuilt_slot.requested_entry
         assert isinstance(rebuilt.events[0], SnowballOpenEvent)
         assert rebuilt_entry is not None
-        assert rebuilt_entry.entry_id.build_count == 2
+        assert rebuilt_entry.entry_id.build_number == 2
         assert rebuilt_entry.requested_entry_price == Money.of("149.92", "JPY")
-        assert rebuilt_layer.build_count(rebuilt_slot) == 2
+        assert rebuilt_layer.build_number(rebuilt_slot) == 2
         assert rebuilt.state.cycles[0].active
 
 
@@ -526,16 +523,18 @@ class TestSnowballStrategy:
             context,
         )
 
-        assert result.events[0].action.value == "open_position"
+        assert result.events[0].action.value == "open_trade"
+        assert result.events[0].display_id == "L1R0B1"
         assert result.events[0].metadata["strategy_type"] == "snowball"
         assert result.events[0].metadata["entry_type"] == EntryIdType.REQUESTED_ENTRY.value
         assert result.events[0].metadata["layer_number"] == 1
+        assert result.events[0].metadata["build_number"] == 1
         assert result.events[0].metadata["cycle_id"] == 1
         assert result.state["snowball"]["cycles"][0]["cycle_id"] == 1
 
         filled_state = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=result.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -560,7 +559,10 @@ class TestSnowballStrategy:
             context.with_state(filled_state),
         )
 
-        assert close_result.events[0].action.value == "close_position"
+        assert close_result.events[0].action.value == "close_trade"
+        assert close_result.events[0].display_id == "L1R0B1"
+        assert close_result.events[0].reason.rule_id == "snowball.close.take_profit"
+        assert close_result.events[0].metadata["close_reason"] == "take_profit"
         requested_close_slot = close_result.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
             "slots"
         ]["0"]
@@ -572,7 +574,7 @@ class TestSnowballStrategy:
 
         closed_state = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=close_result.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -613,7 +615,7 @@ class TestSnowballStrategy:
 
         filled_state = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=result.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -656,7 +658,7 @@ class TestSnowballStrategy:
                     },
                 },
                 rebuild={
-                    "trigger": {"entry_price_mode": "stop_loss_exit_price"},
+                    "price": {"entry_price_mode": "stop_loss_exit_price"},
                 },
             )
         )
@@ -669,9 +671,11 @@ class TestSnowballStrategy:
             TickFactory.tick_at(0, bid="150.00", ask="150.02"),
             context,
         )
+        assert opened.events[0].display_id == "L1R0B1"
+        assert opened.events[0].reason.rule_id == "snowball.open"
         filled = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=opened.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -691,10 +695,11 @@ class TestSnowballStrategy:
             TickFactory.tick_at(1, bid="149.90", ask="149.92"),
             context.with_state(filled),
         )
-        assert stopped.events[0].metadata["planned_rebuild_trigger_price"] == "149.92"
+        assert stopped.events[0].display_id == "L1R0B1"
+        assert stopped.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
         stop_filled = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=stopped.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -712,8 +717,8 @@ class TestSnowballStrategy:
         pending_entry = stop_filled["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
             "0"
         ]["filled_stop_loss_entry"]
-        assert pending_entry["filled_stop_loss_exit_price"]["amount"] == "149.88"
-        assert pending_entry["planned_rebuild_trigger_price"]["amount"] == "149.92"
+        assert pending_entry["filled_stop_loss_price"]["amount"] == "149.88"
+        assert pending_entry["planned_rebuild_price"]["amount"] == "149.92"
 
         not_rebuilt = strategy.on_tick(
             TickFactory.tick_at(2, bid="149.91", ask="149.95"),
@@ -725,6 +730,10 @@ class TestSnowballStrategy:
             TickFactory.tick_at(3, bid="149.92", ask="149.95"),
             context.with_state(not_rebuilt.state),
         )
+        assert rebuilt.events[0].display_id == "L1R0B2"
+        assert rebuilt.events[0].reason.rule_id == "snowball.open.rebuild"
+        assert rebuilt.events[0].metadata["is_rebuild"] is True
+        assert rebuilt.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
         requested_rebuild = rebuilt.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
             "slots"
         ]["0"]["requested_entry"]
@@ -734,7 +743,7 @@ class TestSnowballStrategy:
 
         rebuild_filled = strategy.on_execution_reports(
             (
-                StrategyExecutionReport(
+                StrategyExecutionResponse(
                     event=rebuilt.events[0],
                     order=Order(
                         instrument=USD_JPY,
@@ -771,7 +780,7 @@ class TestSnowballStateSerialization:
         assert isinstance(serialized["cycles"][0]["grid"]["layers"], Mapping)
         serialized_layer = serialized["cycles"][0]["grid"]["layers"]["1"]
         assert isinstance(serialized_layer["slots"], Mapping)
-        assert serialized_layer["build_counts"]["0"] == 1
+        assert serialized_layer["build_numbers"]["0"] == 1
 
         restored = SnowballStateSerializer.from_strategy_state(strategy_state)
 

@@ -11,7 +11,7 @@ from core import (
     StrategyContext,
     StrategyDecisionCode,
     StrategyDecisionReason,
-    StrategyEvent,
+    StrategyEventRequest,
     Tick,
     TradeSide,
 )
@@ -24,6 +24,7 @@ from snowball.events import (
     SnowballStopEvent,
 )
 from snowball.models.entries import FilledEntry, RequestedEntry
+from snowball.models.identifiers import EntryId
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,30 +37,32 @@ class SnowballEventMapper:
         event: SnowballEvent,
         tick: Tick,
         context: StrategyContext,
-    ) -> StrategyEvent:
+    ) -> StrategyEventRequest:
         """Map one Snowball event to a Core strategy event."""
         metadata = self._metadata(event)
         if isinstance(event, SnowballOpenEvent):
-            return StrategyEvent(
+            return StrategyEventRequest(
                 timestamp=tick.timestamp,
                 task_id=context.task_id,
-                action=StrategyAction.OPEN_POSITION,
+                display_id=self._display_id(event.entry.entry_id),
+                action=StrategyAction.OPEN_TRADE,
                 instrument=tick.instrument,
                 side=self._entry_side(event.direction),
                 units=event.entry.requested_units,
                 price=event.entry.requested_entry_price,
                 reason=StrategyDecisionReason(
                     code=StrategyDecisionCode.ENTRY_SIGNAL,
-                    rule_id="snowball.open",
+                    rule_id=self._open_rule_id(metadata),
                     evidence=metadata,
                 ),
                 metadata=metadata,
             )
         if isinstance(event, SnowballCloseEvent):
-            return StrategyEvent(
+            return StrategyEventRequest(
                 timestamp=tick.timestamp,
                 task_id=context.task_id,
-                action=StrategyAction.CLOSE_POSITION,
+                display_id=self._display_id(event.entry.entry_id),
+                action=StrategyAction.CLOSE_TRADE,
                 instrument=tick.instrument,
                 side=self._close_side(event.direction),
                 units=event.entry.filled_units,
@@ -72,7 +75,7 @@ class SnowballEventMapper:
                 metadata=metadata,
             )
         if isinstance(event, SnowballStopEvent):
-            return StrategyEvent(
+            return StrategyEventRequest(
                 timestamp=tick.timestamp,
                 task_id=context.task_id,
                 action=StrategyAction.HOLD,
@@ -84,7 +87,7 @@ class SnowballEventMapper:
                 ),
                 metadata=metadata,
             )
-        return StrategyEvent(
+        return StrategyEventRequest(
             timestamp=tick.timestamp,
             task_id=context.task_id,
             action=StrategyAction.HOLD,
@@ -115,6 +118,11 @@ class SnowballEventMapper:
         if isinstance(event, SnowballOpenEvent):
             metadata = metadata.merge(self._requested_entry_metadata(event.entry))
             metadata = metadata.with_value("price", str(event.entry.requested_entry_price))
+            if self._metadata_bool(metadata.get("is_rebuild", False)):
+                metadata = metadata.with_value(
+                    "planned_rebuild_price",
+                    str(event.entry.requested_entry_price),
+                )
         if isinstance(event, SnowballCloseEvent):
             metadata = metadata.merge(self._filled_entry_metadata(event.entry))
             metadata = metadata.merge(
@@ -161,6 +169,20 @@ class SnowballEventMapper:
                 else str(entry.planned_stop_loss_price)
             ),
         )
+
+    def _display_id(self, entry_id: EntryId) -> str:
+        return f"L{entry_id.layer_number}R{entry_id.slot_number}B{entry_id.build_number}"
+
+    @staticmethod
+    def _metadata_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in {"1", "true", "yes"}
+
+    def _open_rule_id(self, metadata: Metadata) -> str:
+        if metadata.get("is_rebuild") is True:
+            return "snowball.open.rebuild"
+        return "snowball.open"
 
     def _entry_side(self, direction: PositionSide) -> TradeSide:
         return TradeSide.BUY if direction == PositionSide.LONG else TradeSide.SELL

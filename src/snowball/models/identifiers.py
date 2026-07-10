@@ -50,7 +50,7 @@ class EntryId:
     cycle_id: CycleId
     layer_number: int
     slot_number: int
-    build_count: int
+    build_number: int
     entry_type: EntryIdType = EntryIdType.REQUESTED_ENTRY
 
     @property
@@ -58,7 +58,7 @@ class EntryId:
         """Return a human-readable entry identifier."""
         return (
             f"C{self.cycle_id}:L{self.layer_number}:S{self.slot_number}:"
-            f"{self.entry_type.value}:B{self.build_count}"
+            f"{self.entry_type.value}:B{self.build_number}"
         )
 
     @property
@@ -81,7 +81,7 @@ class EntryId:
             layer_number=self.layer_number,
             slot_number=self.slot_number,
             retracement_count=self.retracement_count,
-            build_count=self.build_count,
+            build_number=self.build_number,
         )
 
     def with_type(self, entry_type: EntryIdType) -> EntryId:
@@ -90,7 +90,7 @@ class EntryId:
             cycle_id=self.cycle_id,
             layer_number=self.layer_number,
             slot_number=self.slot_number,
-            build_count=self.build_count,
+            build_number=self.build_number,
             entry_type=entry_type,
         )
 

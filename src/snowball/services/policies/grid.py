@@ -38,8 +38,10 @@ class SnowballGridPolicy:
             return (
                 f"cycle_id={cycle.cycle_id}, direction={cycle.direction.value}, "
                 f"expected={expected}, "
-                f"prev=L{previous[0]}/R{previous[1]} entry={previous[2]} tp={previous[3]}, "
-                f"curr=L{current[0]}/R{current[1]} entry={current[2]} tp={current[3]}"
+                f"prev=L{previous[0]}/R{previous[1]} "
+                f"entry={previous[2]} take_profit={previous[3]}, "
+                f"curr=L{current[0]}/R{current[1]} "
+                f"entry={current[2]} take_profit={current[3]}"
             )
         return None
 

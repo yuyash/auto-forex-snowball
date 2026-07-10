@@ -5,7 +5,7 @@ from core import Money, PositionSide
 
 from snowball.config import (
     RebuildConfig,
-    RebuildTriggerConfig,
+    RebuildPriceConfig,
     SnowballConfig,
 )
 from snowball.enums import CloseReason, RebuildEntryPriceMode
@@ -34,7 +34,7 @@ def requested_entry(
             cycle_id=1,
             layer_number=1,
             slot_number=slot_number,
-            build_count=1,
+            build_number=1,
         ),
         requested_units=Decimal(units),
         requested_entry_price=Money.of(price, "JPY"),
@@ -61,9 +61,9 @@ def filled_entry(
 
 def place_filled_entry(layer: Layer, entry: FilledEntry) -> None:
     slot = layer.slot(entry.entry_id.slot_number)
-    assigned_build_count = layer.next_build_count(slot)
-    if entry.entry_id.build_count != assigned_build_count:
-        raise AssertionError("test entry build count does not match layer generator")
+    assigned_build_number = layer.next_build_number(slot)
+    if entry.entry_id.build_number != assigned_build_number:
+        raise AssertionError("test entry build number does not match layer generator")
     slot.place_entry(entry.requested, expected_entry_id=entry.requested.entry_id)
     slot.fill_entry(entry)
 
@@ -80,16 +80,16 @@ def test_grid_selector_uses_pending_stop_loss_original_as_effective_head() -> No
 
     layer.r0.request_stop_loss(
         requested_at=NOW,
-        requested_stop_loss_exit_price=Money.of("149.00", "JPY"),
+        planned_stop_loss_price=Money.of("149.00", "JPY"),
     )
 
     assert selector.effective_head(cycle) is original
 
     layer.r0.fill_stop_loss(
         filled_at=NOW,
-        filled_stop_loss_exit_price=Money.of("149.00", "JPY"),
+        filled_stop_loss_price=Money.of("149.00", "JPY"),
         rebuildable=True,
-        planned_rebuild_trigger_price=Money.of("150.00", "JPY"),
+        planned_rebuild_price=Money.of("150.00", "JPY"),
     )
 
     assert selector.effective_head(cycle) is original
@@ -171,10 +171,10 @@ def test_take_profit_planner_uses_snapshot_weighted_average_without_mutating_ent
     assert counter.requested.planned_take_profit_price == Money.of("150.00", "JPY")
 
 
-def test_stop_loss_planner_buffers_rebuild_trigger_from_stop_loss_exit_price() -> None:
+def test_stop_loss_planner_buffers_planned_rebuild_price_from_stop_loss_exit_price() -> None:
     config = SnowballConfig(
         rebuild=RebuildConfig(
-            trigger=RebuildTriggerConfig(
+            price=RebuildPriceConfig(
                 entry_price_mode=RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE,
                 buffer_pips=Decimal("5"),
             )
@@ -186,7 +186,7 @@ def test_stop_loss_planner_buffers_rebuild_trigger_from_stop_loss_exit_price() -
         SnowballMarketPricing(),
     )
 
-    trigger = planner.rebuild_trigger_price(
+    planned_rebuild_price = planner.planned_rebuild_price(
         direction=PositionSide.LONG,
         original_entry_price=Money.of("150.00", "JPY"),
         planned_stop_loss_price=Money.of("149.92", "JPY"),
@@ -194,13 +194,13 @@ def test_stop_loss_planner_buffers_rebuild_trigger_from_stop_loss_exit_price() -
         pip_size=Decimal("0.01"),
     )
 
-    assert trigger == Money.of("149.97", "JPY")
+    assert planned_rebuild_price == Money.of("149.97", "JPY")
 
 
-def test_stop_loss_planner_does_not_buffer_original_entry_rebuild_trigger() -> None:
+def test_stop_loss_planner_does_not_buffer_original_entry_rebuild_price() -> None:
     config = SnowballConfig(
         rebuild=RebuildConfig(
-            trigger=RebuildTriggerConfig(
+            price=RebuildPriceConfig(
                 entry_price_mode=RebuildEntryPriceMode.ORIGINAL_ENTRY_PRICE,
                 buffer_pips=Decimal("5"),
             )
@@ -212,7 +212,7 @@ def test_stop_loss_planner_does_not_buffer_original_entry_rebuild_trigger() -> N
         SnowballMarketPricing(),
     )
 
-    trigger = planner.rebuild_trigger_price(
+    planned_rebuild_price = planner.planned_rebuild_price(
         direction=PositionSide.LONG,
         original_entry_price=Money.of("150.00", "JPY"),
         planned_stop_loss_price=Money.of("149.92", "JPY"),
@@ -220,4 +220,4 @@ def test_stop_loss_planner_does_not_buffer_original_entry_rebuild_trigger() -> N
         pip_size=Decimal("0.01"),
     )
 
-    assert trigger == Money.of("150.00", "JPY")
+    assert planned_rebuild_price == Money.of("150.00", "JPY")

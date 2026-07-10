@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from core import (
     Strategy,
     StrategyContext,
-    StrategyExecutionReport,
+    StrategyExecutionResponse,
     StrategyParameters,
     StrategyResult,
     StrategyState,
@@ -60,7 +60,7 @@ class SnowballStrategy(Strategy):
 
     def on_execution_reports(
         self,
-        reports: Sequence[StrategyExecutionReport],
+        reports: Sequence[StrategyExecutionResponse],
         context: StrategyContext,
     ) -> StrategyState:
         """Apply broker execution reports to Snowball state."""

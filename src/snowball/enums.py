@@ -85,9 +85,9 @@ class RebuildStopLossMode(StrEnum):
 class CloseReason(StrEnum):
     """Reason a Snowball entry is closed."""
 
-    TAKE_PROFIT = "tp"
-    COUNTER_TAKE_PROFIT = "counter_tp"
-    LAYER_INITIAL_TAKE_PROFIT = "layer_initial_tp"
+    TAKE_PROFIT = "take_profit"
+    COUNTER_TAKE_PROFIT = "counter_take_profit"
+    LAYER_INITIAL_TAKE_PROFIT = "layer_initial_take_profit"
     STOP_LOSS = "stop_loss"
     SHRINK = "shrink"
     EMERGENCY = "emergency"

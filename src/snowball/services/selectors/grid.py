@@ -42,14 +42,14 @@ class SnowballGridSelector:
                 return None
             if slot.entry is not None:
                 continue
-            if retracement_count > max_refillable_retracement and layer.build_count(slot) > 0:
+            if retracement_count > max_refillable_retracement and layer.build_number(slot) > 0:
                 return None
             higher_present = any(
                 layer.slot(higher_number).is_present
                 for higher_number in slot_numbers
                 if higher_number > retracement_count
             )
-            if higher_present and layer.build_count(slot) > 0:
+            if higher_present and layer.build_number(slot) > 0:
                 continue
             return slot
         return None

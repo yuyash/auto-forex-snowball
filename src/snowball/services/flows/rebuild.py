@@ -33,7 +33,7 @@ class SnowballRebuildService:
         cycle: Cycle,
         tick: Tick,
     ) -> list[SnowballEvent]:
-        """Rebuild stop-loss entries whose trigger price was revisited."""
+        """Rebuild stop-loss entries whose planned rebuild price was reached."""
         if not self.config.stop_loss.enabled or not self.config.rebuild.enabled:
             return []
         events: list[SnowballEvent] = []
@@ -41,7 +41,7 @@ class SnowballRebuildService:
             stop_loss_entry = slot.filled_stop_loss_entry
             if stop_loss_entry is None:
                 continue
-            if not self.pricing.rebuild_trigger_hit(
+            if not self.pricing.rebuild_price_hit(
                 stop_loss_entry=stop_loss_entry,
                 direction=cycle.direction,
                 tick=tick,
@@ -51,7 +51,7 @@ class SnowballRebuildService:
                 cycle=cycle,
                 layer=layer,
                 retracement_count=layer.retracement_count(slot),
-                entry_price=stop_loss_entry.planned_rebuild_trigger_price,
+                entry_price=stop_loss_entry.planned_rebuild_price,
             )
             retracement_count = layer.retracement_count(slot)
             take_profit_price = self.take_profit_planner.rebuild_take_profit_price(

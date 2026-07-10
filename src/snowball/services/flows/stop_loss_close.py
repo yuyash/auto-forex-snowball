@@ -51,12 +51,12 @@ class SnowballStopLossCloseService:
                     highest=highest,
                 ):
                     continue
-                requested_stop_loss_exit_price = entry.planned_stop_loss_price
-                if requested_stop_loss_exit_price is None:
+                planned_stop_loss_price = entry.planned_stop_loss_price
+                if planned_stop_loss_price is None:
                     continue
                 slot.request_stop_loss(
                     requested_at=tick.timestamp,
-                    requested_stop_loss_exit_price=requested_stop_loss_exit_price,
+                    planned_stop_loss_price=planned_stop_loss_price,
                 )
                 exit_price = self.pricing.exit_side_price(cycle.direction, tick)
                 realized = self.pricing.realized_pl(
@@ -64,11 +64,11 @@ class SnowballStopLossCloseService:
                     entry=entry,
                     exit_price=exit_price,
                 )
-                rebuild_trigger_price = (
-                    self.stop_loss_planner.rebuild_trigger_price(
+                planned_rebuild_price = (
+                    self.stop_loss_planner.planned_rebuild_price(
                         direction=cycle.direction,
                         original_entry_price=entry.filled_entry_price,
-                        planned_stop_loss_price=requested_stop_loss_exit_price,
+                        planned_stop_loss_price=planned_stop_loss_price,
                         stop_loss_exit_price=exit_price,
                         pip_size=pip_size,
                     )
@@ -84,10 +84,10 @@ class SnowballStopLossCloseService:
                         metadata=Metadata.of(
                             realized_pl=str(realized),
                             rebuildable=self.config.rebuild.enabled,
-                            planned_rebuild_trigger_price=(
+                            planned_rebuild_price=(
                                 None
-                                if rebuild_trigger_price is None
-                                else str(rebuild_trigger_price.amount)
+                                if planned_rebuild_price is None
+                                else str(planned_rebuild_price)
                             ),
                         ),
                     )
