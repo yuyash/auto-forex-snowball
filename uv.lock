@@ -19,7 +19,7 @@ wheels = [
 [[package]]
 name = "auto-forex-core"
 version = "0.1.0"
-source = { directory = "../core" }
+source = { editable = "../core" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
@@ -59,7 +59,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "auto-forex-core", directory = "../core" }]
+requires-dist = [{ name = "auto-forex-core", editable = "../core" }]
 
 [package.metadata.requires-dev]
 dev = [

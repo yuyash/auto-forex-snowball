@@ -16,7 +16,7 @@ build-backend = "uv_build"
 module-name = "snowball"
 
 [tool.uv.sources]
-auto-forex-core = { path = "../core" }
+auto-forex-core = { path = "../core", editable = true }
 
 [dependency-groups]
 dev = [
