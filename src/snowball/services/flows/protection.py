@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 
-from core import Metadata, Tick
+from core import Metadata, Percent, Pips, Tick
 
 from snowball.config import SnowballConfig
 from snowball.enums import CloseReason
@@ -29,7 +28,7 @@ class SnowballProtectionService:
     grid_selector: SnowballGridSelector
     event_factory: SnowballEventFactory
 
-    def handle_emergency(self, *, margin_ratio: Decimal) -> SnowballStopEvent | None:
+    def handle_emergency(self, *, margin_ratio: Percent) -> SnowballStopEvent | None:
         """Return an emergency stop event when protection threshold is exceeded."""
         protection = self.config.protection
         if not protection.emergency_enabled or margin_ratio < protection.emergency_margin_percent:
@@ -83,8 +82,8 @@ class SnowballProtectionService:
             )
             layer_number = cycle.grid.layer_number(layer)
             slot.request_close(
-                requested_at=tick.timestamp,
-                requested_exit_price=exit_price,
+                planned_at=tick.timestamp,
+                planned_exit_price=exit_price,
                 close_reason=CloseReason.SHRINK,
                 refillable=False,
             )
@@ -117,7 +116,7 @@ class SnowballProtectionService:
         tick: Tick,
     ) -> tuple[Cycle, Layer, Slot, FilledEntry] | None:
         pip_size = tick.instrument.pip_size
-        candidates: list[tuple[Decimal, Cycle, Layer, Slot, FilledEntry]] = []
+        candidates: list[tuple[Pips, Cycle, Layer, Slot, FilledEntry]] = []
         for cycle in state.active_cycles():
             entry = self.grid_selector.shrink_front_entry(cycle)
             if entry is None or not self.pricing.can_close_on_tick(entry=entry, tick=tick):

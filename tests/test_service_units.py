@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from core import Money, PositionSide
+from core import Money, Pips, PositionSide, Units
 
 from snowball.config import (
     RebuildConfig,
@@ -36,9 +36,9 @@ def requested_entry(
             slot_number=slot_number,
             build_number=1,
         ),
-        requested_units=Decimal(units),
-        requested_entry_price=Money.of(price, "JPY"),
-        requested_at=NOW,
+        planned_units=Units(units),
+        planned_entry_price=Money.of(price, "JPY"),
+        planned_at=NOW,
         planned_take_profit_price=Money.of(take_profit_price, "JPY"),
         planned_stop_loss_price=Money.of("149.00", "JPY"),
     )
@@ -69,7 +69,7 @@ def place_filled_entry(layer: Layer, entry: FilledEntry) -> None:
 
 
 def test_grid_selector_uses_pending_stop_loss_original_as_effective_head() -> None:
-    grid = Grid.create(base_units=Decimal("1000"), max_retracements=2)
+    grid = Grid.create(base_units=Units("1000"), max_retracements=2)
     layer = grid.current_layer
     original = filled_entry(slot_number=0, price="150.00")
     place_filled_entry(layer, original)
@@ -79,7 +79,7 @@ def test_grid_selector_uses_pending_stop_loss_original_as_effective_head() -> No
     assert selector.effective_head(cycle) is original
 
     layer.r0.request_stop_loss(
-        requested_at=NOW,
+        planned_at=NOW,
         planned_stop_loss_price=Money.of("149.00", "JPY"),
     )
 
@@ -99,14 +99,14 @@ def test_grid_selector_uses_pending_stop_loss_original_as_effective_head() -> No
 
 
 def test_grid_selector_respects_refillable_counter_limit() -> None:
-    layer = Layer.create(base_units=Decimal("1000"), max_retracements=2)
+    layer = Layer.create(base_units=Units("1000"), max_retracements=2)
     place_filled_entry(layer, filled_entry(slot_number=0, price="150.00"))
     place_filled_entry(layer, filled_entry(slot_number=1, price="149.70"))
     r2 = layer.slot(2)
     place_filled_entry(layer, filled_entry(slot_number=2, price="149.40"))
     r2.request_close(
-        requested_at=NOW,
-        requested_exit_price=Money.of("151.00", "JPY"),
+        planned_at=NOW,
+        planned_exit_price=Money.of("151.00", "JPY"),
         close_reason=CloseReason.COUNTER_TAKE_PROFIT,
         refillable=True,
     )
@@ -128,7 +128,7 @@ def test_take_profit_planner_uses_snapshot_weighted_average_without_mutating_ent
         SnowballCalculator(config),
         SnowballMarketPricing(),
     )
-    layer = Layer.create(base_units=Decimal("1000"), max_retracements=2)
+    layer = Layer.create(base_units=Units("1000"), max_retracements=2)
     head = filled_entry(
         slot_number=0,
         price="150.00",
@@ -149,7 +149,7 @@ def test_take_profit_planner_uses_snapshot_weighted_average_without_mutating_ent
         direction=PositionSide.LONG,
         retracement_count=2,
         entry_price=Money.of("149.00", "JPY"),
-        units=Decimal("3000"),
+        units=Units("3000"),
         pip_size=Decimal("0.01"),
         include_head=None,
     )
@@ -176,7 +176,7 @@ def test_stop_loss_planner_buffers_planned_rebuild_price_from_stop_loss_exit_pri
         rebuild=RebuildConfig(
             price=RebuildPriceConfig(
                 entry_price_mode=RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE,
-                buffer_pips=Decimal("5"),
+                buffer_pips=Pips("5"),
             )
         )
     )
@@ -202,7 +202,7 @@ def test_stop_loss_planner_does_not_buffer_original_entry_rebuild_price() -> Non
         rebuild=RebuildConfig(
             price=RebuildPriceConfig(
                 entry_price_mode=RebuildEntryPriceMode.ORIGINAL_ENTRY_PRICE,
-                buffer_pips=Decimal("5"),
+                buffer_pips=Pips("5"),
             )
         )
     )

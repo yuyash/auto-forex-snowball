@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core import Money, PositionSide, Tick
+from core import Money, Pips, PositionSide, Tick
 
 from snowball.models.entries import FilledEntry, FilledStopLossEntry
 
@@ -27,7 +27,7 @@ class SnowballMarketPricing:
         *,
         direction: PositionSide,
         entry_price: Money,
-        tp_pips: Decimal,
+        tp_pips: Pips,
         pip_size: Decimal,
     ) -> Money:
         """Return a take-profit price from pips."""
@@ -42,7 +42,7 @@ class SnowballMarketPricing:
         *,
         direction: PositionSide,
         entry_price: Money,
-        stop_loss_pips: Decimal,
+        stop_loss_pips: Pips,
         pip_size: Decimal,
     ) -> Money:
         """Return a stop-loss price from pips."""
@@ -57,7 +57,7 @@ class SnowballMarketPricing:
         *,
         direction: PositionSide,
         price: Money,
-        buffer_pips: Decimal,
+        buffer_pips: Pips,
         pip_size: Decimal,
     ) -> Money:
         """Return a price moved by a directional positive buffer."""
@@ -73,9 +73,9 @@ class SnowballMarketPricing:
         first_price: Money,
         second_price: Money,
         pip_size: Decimal,
-    ) -> Decimal:
+    ) -> Pips:
         """Return the absolute distance between two prices in pips."""
-        return abs(first_price.amount - second_price.amount) / pip_size
+        return Pips.of(abs(first_price.amount - second_price.amount) / pip_size)
 
     def adverse_pips(
         self,
@@ -141,17 +141,21 @@ class SnowballMarketPricing:
         entry: FilledEntry,
         tick: Tick,
         pip_size: Decimal,
-    ) -> Decimal:
+    ) -> Pips:
         """Return positive loss in pips, or zero when not losing."""
         exit_price = self.exit_side_price(direction, tick)
         if direction == PositionSide.LONG:
-            return max(
-                (entry.filled_entry_price.amount - exit_price.amount) / pip_size,
+            return Pips.of(
+                max(
+                    (entry.filled_entry_price.amount - exit_price.amount) / pip_size,
+                    Decimal("0"),
+                )
+            )
+        return Pips.of(
+            max(
+                (exit_price.amount - entry.filled_entry_price.amount) / pip_size,
                 Decimal("0"),
             )
-        return max(
-            (exit_price.amount - entry.filled_entry_price.amount) / pip_size,
-            Decimal("0"),
         )
 
     def realized_pl(

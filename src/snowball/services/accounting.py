@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from core import Money, Tick
+from core import Money, Percent, Tick
 
 from snowball.config import SnowballConfig
 from snowball.models.state import SnowballState
@@ -18,7 +18,7 @@ class AccountSnapshot:
 
     balance: Money
     nav: Money
-    margin_ratio: Decimal
+    margin_ratio: Percent
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,19 +62,19 @@ class SnowballAccounting:
         tick: Tick,
         nav: Money,
         config: SnowballConfig,
-    ) -> Decimal:
+    ) -> Percent:
         """Return required margin / NAV as a percentage."""
         mid = tick.effective_mid
         if nav.amount <= 0 or mid.amount <= 0:
-            return Decimal("0")
+            return Percent("0")
         long_units, short_units = state.live_units_by_direction()
         required_units = max(long_units, short_units)
         if required_units <= 0:
-            return Decimal("0")
+            return Percent("0")
         required_margin = (
             mid.amount
             * required_units
             * config.account.margin_rate
             * config.account.quote_to_account_rate
         )
-        return (required_margin / nav.amount) * Decimal("100")
+        return Percent.of((required_margin / nav.amount) * Decimal("100"))

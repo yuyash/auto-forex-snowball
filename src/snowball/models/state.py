@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Self
 
-from core import PositionSide
+from core import PositionSide, Units
 
 from snowball.enums import CycleStatus
 from snowball.models.entries import FilledEntry
@@ -182,7 +182,7 @@ class SnowballState:
             entries.extend(cycle.live_entries())
         return entries
 
-    def live_units_by_direction(self) -> tuple[Decimal, Decimal]:
+    def live_units_by_direction(self) -> tuple[Units, Units]:
         """Return total long and short units."""
         long_units = Decimal("0")
         short_units = Decimal("0")
@@ -192,7 +192,7 @@ class SnowballState:
                     long_units += entry.filled_units
                 else:
                     short_units += entry.filled_units
-        return long_units, short_units
+        return Units.of(long_units), Units.of(short_units)
 
     def refresh_cycle_statuses(self) -> None:
         """Refresh status for all cycles."""

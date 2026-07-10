@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from core import Money
+from core import Money, Units
 from pydantic import AwareDatetime
 
 from snowball.enums import CloseReason, EntryRole, SlotStatus
@@ -135,8 +135,8 @@ class Slot:
     def request_close(
         self,
         *,
-        requested_at: AwareDatetime,
-        requested_exit_price: Money,
+        planned_at: AwareDatetime,
+        planned_exit_price: Money,
         close_reason: CloseReason,
         refillable: bool,
     ) -> FilledEntry:
@@ -145,8 +145,8 @@ class Slot:
         if entry is None:
             raise ValueError("slot has no live entry")
         requested = entry.request_close(
-            requested_at=requested_at,
-            requested_exit_price=requested_exit_price,
+            planned_at=planned_at,
+            planned_exit_price=planned_exit_price,
             close_reason=close_reason,
             refillable=refillable,
         )
@@ -159,7 +159,7 @@ class Slot:
         requested = self.requested_close_entry
         if requested is None:
             raise ValueError("slot has no requested close entry")
-        if filled_at < requested.requested_at:
+        if filled_at < requested.planned_at:
             raise ValueError("close fill timestamp precedes close request")
         next_entry = requested.fill(filled_at=filled_at)
         if next_entry is not None:
@@ -173,7 +173,7 @@ class Slot:
     def request_stop_loss(
         self,
         *,
-        requested_at: AwareDatetime,
+        planned_at: AwareDatetime,
         planned_stop_loss_price: Money,
     ) -> FilledEntry:
         """Replace a live entry with a requested stop-loss close."""
@@ -181,7 +181,7 @@ class Slot:
         if entry is None:
             raise ValueError("slot has no live entry")
         requested = entry.stop_loss(
-            requested_at=requested_at,
+            planned_at=planned_at,
             planned_stop_loss_price=planned_stop_loss_price,
         )
         self._validate_entry(requested, expected_entry_id=entry.entry_id)
@@ -200,7 +200,7 @@ class Slot:
         requested = self.requested_stop_loss_entry
         if requested is None:
             raise ValueError("slot has no requested stop-loss entry")
-        if filled_at < requested.requested_at:
+        if filled_at < requested.planned_at:
             raise ValueError("stop-loss fill timestamp precedes stop-loss request")
         next_entry = requested.fill(
             filled_at=filled_at,
@@ -227,11 +227,11 @@ class Slot:
             raise ValueError("rebuilt entry does not belong to the stopped slot")
         if entry.entry_id.build_number <= original_id.build_number:
             raise ValueError("rebuilt entry build number must advance")
-        if entry.requested_at < stop_loss_entry.filled_at:
+        if entry.planned_at < stop_loss_entry.filled_at:
             raise ValueError("rebuild request timestamp precedes stop-loss fill")
         self._require_same_currency(
             stop_loss_entry.planned_rebuild_price,
-            entry.requested_entry_price,
+            entry.planned_entry_price,
             "rebuilt entry price",
         )
         self._entry = entry
@@ -256,7 +256,7 @@ class Slot:
             return None
         return entry.filled_entry_price
 
-    def reference_filled_units(self) -> Decimal | None:
+    def reference_filled_units(self) -> Units | None:
         """Return the filled units retained for grid calculations."""
         entry = self._reference_filled_entry()
         if entry is None:
@@ -337,14 +337,14 @@ class Slot:
             EntryIdType.REQUESTED_ENTRY,
             expected_entry_id=expected_entry_id,
         )
-        cls._require_positive_decimal(entry.requested_units, "requested units")
-        cls._require_positive_money(entry.requested_entry_price, "requested entry price")
+        cls._require_positive_decimal(entry.planned_units, "planned units")
+        cls._require_positive_money(entry.planned_entry_price, "planned entry price")
         cls._require_positive_money(
             entry.planned_take_profit_price,
             "planned take-profit price",
         )
         cls._require_same_currency(
-            entry.requested_entry_price,
+            entry.planned_entry_price,
             entry.planned_take_profit_price,
             "planned take-profit price",
         )
@@ -354,11 +354,11 @@ class Slot:
                 "planned stop-loss price",
             )
             cls._require_same_currency(
-                entry.requested_entry_price,
+                entry.planned_entry_price,
                 entry.planned_stop_loss_price,
                 "planned stop-loss price",
             )
-        cls._require_aware_datetime(entry.requested_at, "requested_at")
+        cls._require_aware_datetime(entry.planned_at, "planned_at")
 
     @classmethod
     def _validate_filled_entry(
@@ -385,23 +385,23 @@ class Slot:
         cls._require_positive_decimal(entry.filled_units, "filled units")
         cls._require_positive_money(entry.filled_entry_price, "filled entry price")
         cls._require_same_currency(
-            entry.requested.requested_entry_price,
+            entry.requested.planned_entry_price,
             entry.filled_entry_price,
             "filled entry price",
         )
         cls._require_aware_datetime(entry.filled_at, "filled_at")
-        if entry.filled_at < entry.requested.requested_at:
+        if entry.filled_at < entry.requested.planned_at:
             raise ValueError("entry fill timestamp precedes entry request")
         expected_take_profit = cls._fill_shifted_money(
             entry.requested.planned_take_profit_price,
-            requested_entry_price=entry.requested.requested_entry_price,
+            planned_entry_price=entry.requested.planned_entry_price,
             filled_entry_price=entry.filled_entry_price,
         )
         if entry.planned_take_profit_price != expected_take_profit:
             raise ValueError("filled entry take-profit price is not fill-adjusted")
         expected_stop_loss = cls._fill_shifted_money(
             entry.requested.planned_stop_loss_price,
-            requested_entry_price=entry.requested.requested_entry_price,
+            planned_entry_price=entry.requested.planned_entry_price,
             filled_entry_price=entry.filled_entry_price,
         )
         if entry.planned_stop_loss_price != expected_stop_loss:
@@ -433,14 +433,14 @@ class Slot:
             raise ValueError("requested close id does not match original entry id")
         if entry.close_reason == CloseReason.STOP_LOSS:
             raise ValueError("stop-loss close must use requested stop-loss entry")
-        cls._require_positive_money(entry.requested_exit_price, "requested exit price")
+        cls._require_positive_money(entry.planned_exit_price, "planned exit price")
         cls._require_same_currency(
             entry.original_entry.filled_entry_price,
-            entry.requested_exit_price,
-            "requested exit price",
+            entry.planned_exit_price,
+            "planned exit price",
         )
-        cls._require_aware_datetime(entry.requested_at, "requested_at")
-        if entry.requested_at < entry.original_entry.filled_at:
+        cls._require_aware_datetime(entry.planned_at, "planned_at")
+        if entry.planned_at < entry.original_entry.filled_at:
             raise ValueError("close request timestamp precedes entry fill")
 
     @classmethod
@@ -476,8 +476,8 @@ class Slot:
             entry.planned_stop_loss_price,
             "planned stop-loss price",
         )
-        cls._require_aware_datetime(entry.requested_at, "requested_at")
-        if entry.requested_at < entry.original_entry.filled_at:
+        cls._require_aware_datetime(entry.planned_at, "planned_at")
+        if entry.planned_at < entry.original_entry.filled_at:
             raise ValueError("stop-loss request timestamp precedes entry fill")
 
     @classmethod
@@ -505,7 +505,7 @@ class Slot:
         ):
             raise ValueError("filled stop-loss id does not match stop-loss request id")
         cls._require_aware_datetime(entry.filled_at, "filled_at")
-        if entry.filled_at < entry.requested.requested_at:
+        if entry.filled_at < entry.requested.planned_at:
             raise ValueError("stop-loss fill timestamp precedes stop-loss request")
         cls._require_positive_money(
             entry.filled_stop_loss_price,
@@ -584,12 +584,12 @@ class Slot:
     def _fill_shifted_money(
         value: Money | None,
         *,
-        requested_entry_price: Money,
+        planned_entry_price: Money,
         filled_entry_price: Money,
     ) -> Money | None:
         if value is None:
             return None
-        fill_delta = (filled_entry_price - requested_entry_price).amount
+        fill_delta = (filled_entry_price - planned_entry_price).amount
         if not fill_delta:
             return value
         return Money.of(value.amount + fill_delta, value.currency)
@@ -605,7 +605,7 @@ class Layer:
     view and the ``Slot`` methods to mutate a slot in place.
     """
 
-    base_units: Decimal
+    base_units: Units
     _slots: dict[int, Slot] = field(default_factory=dict)
     _build_number_generators: dict[int, IntegerIdGenerator] = field(
         default_factory=dict,
@@ -614,6 +614,7 @@ class Layer:
     )
 
     def __post_init__(self) -> None:
+        self.base_units = Units.of(self.base_units)
         if self.base_units <= 0:
             raise ValueError("layer base units must be positive")
         self._validate_slot_numbers()
@@ -637,7 +638,7 @@ class Layer:
     def create(
         cls,
         *,
-        base_units: Decimal,
+        base_units: Units,
         max_retracements: int,
     ) -> Layer:
         """Create a layer with R0 through Rmax."""
@@ -653,7 +654,7 @@ class Layer:
     def from_slots(
         cls,
         *,
-        base_units: Decimal,
+        base_units: Units,
         slots: Mapping[int, Slot],
         build_numbers: Mapping[int, int] | None = None,
     ) -> Layer:
@@ -813,7 +814,7 @@ class Grid:
         self._validate_layer_numbers()
 
     @classmethod
-    def create(cls, *, base_units: Decimal, max_retracements: int) -> Grid:
+    def create(cls, *, base_units: Units, max_retracements: int) -> Grid:
         """Create a grid with one empty L1 layer."""
         return cls(
             _layers={
@@ -839,7 +840,7 @@ class Grid:
         """Return the highest-numbered layer."""
         return self._layers[max(self._layers)]
 
-    def add_layer(self, *, base_units: Decimal, max_retracements: int) -> Layer:
+    def add_layer(self, *, base_units: Units, max_retracements: int) -> Layer:
         """Append and return a new layer."""
         layer_number = max(self._layers) + 1
         layer = Layer.create(

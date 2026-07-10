@@ -27,6 +27,8 @@ def changes(values: Mapping[str, Any], **parsers: Any) -> dict[str, Any]:
 
 def decimal_value(value: Any) -> Decimal:
     """Parse a decimal config value."""
+    if isinstance(value, bool | int | float):
+        raise TypeError("decimal config values must be provided as Decimal or str")
     return Decimal(str(value))
 
 

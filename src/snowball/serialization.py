@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
-from core import Money, PositionSide, StrategyState
+from core import Money, PositionSide, StrategyState, Units
 
 from snowball.enums import CloseReason, CycleStatus
 from snowball.models.entries import (
@@ -116,7 +115,7 @@ class SnowballStateSerializer:
         if not isinstance(build_numbers, Mapping):
             raise ValueError("layer build numbers must be a mapping")
         return Layer.from_slots(
-            base_units=Decimal(str(data["base_units"])),
+            base_units=Units.of(data["base_units"]),
             slots={
                 int(slot_number): cls._slot_from_mapping(item)
                 for slot_number, item in slots.items()
@@ -239,9 +238,9 @@ class SnowballStateSerializer:
     def _requested_entry_to_mapping(cls, entry: RequestedEntry) -> dict[str, Any]:
         return {
             "entry_id": cls._entry_id_to_mapping(entry.entry_id),
-            "requested_units": str(entry.requested_units),
-            "requested_entry_price": cls._money_to_mapping(entry.requested_entry_price),
-            "requested_at": entry.requested_at.isoformat(),
+            "planned_units": str(entry.planned_units),
+            "planned_entry_price": cls._money_to_mapping(entry.planned_entry_price),
+            "planned_at": entry.planned_at.isoformat(),
             "planned_take_profit_price": cls._money_to_mapping(entry.planned_take_profit_price),
             "planned_stop_loss_price": cls._optional_money_to_mapping(
                 entry.planned_stop_loss_price,
@@ -252,9 +251,9 @@ class SnowballStateSerializer:
     def _requested_entry_from_mapping(cls, data: Mapping[str, Any]) -> RequestedEntry:
         return RequestedEntry(
             entry_id=cls._entry_id_from_mapping(data["entry_id"]),
-            requested_units=Decimal(str(data["requested_units"])),
-            requested_entry_price=cls._money_from_mapping(data["requested_entry_price"]),
-            requested_at=cls._aware_datetime(data["requested_at"]),
+            planned_units=Units.of(data["planned_units"]),
+            planned_entry_price=cls._money_from_mapping(data["planned_entry_price"]),
+            planned_at=cls._aware_datetime(data["planned_at"]),
             planned_take_profit_price=cls._money_from_mapping(data["planned_take_profit_price"]),
             planned_stop_loss_price=cls._optional_money_from_mapping(
                 data["planned_stop_loss_price"],
@@ -303,7 +302,7 @@ class SnowballStateSerializer:
         return FilledEntry(
             entry_id=cls._entry_id_from_mapping(data["filled_entry_id"]),
             requested=requested_entry,
-            filled_units=Decimal(str(data["filled_units"])),
+            filled_units=Units.of(data["filled_units"]),
             filled_entry_price=cls._money_from_mapping(data["filled_entry_price"]),
             filled_at=cls._aware_datetime(data["filled_at"]),
             planned_take_profit_price=cls._money_from_mapping(
@@ -322,8 +321,8 @@ class SnowballStateSerializer:
         return {
             "entry_id": cls._entry_id_to_mapping(entry.entry_id),
             "original_entry": cls._filled_entry_to_mapping(entry.original_entry),
-            "requested_exit_price": cls._money_to_mapping(entry.requested_exit_price),
-            "requested_at": entry.requested_at.isoformat(),
+            "planned_exit_price": cls._money_to_mapping(entry.planned_exit_price),
+            "planned_at": entry.planned_at.isoformat(),
             "close_reason": entry.close_reason.value,
             "refillable": entry.refillable,
         }
@@ -336,8 +335,8 @@ class SnowballStateSerializer:
         return RequestedCloseEntry(
             entry_id=cls._entry_id_from_mapping(data["entry_id"]),
             original_entry=cls._filled_entry_from_mapping(data["original_entry"]),
-            requested_exit_price=cls._money_from_mapping(data["requested_exit_price"]),
-            requested_at=cls._aware_datetime(data["requested_at"]),
+            planned_exit_price=cls._money_from_mapping(data["planned_exit_price"]),
+            planned_at=cls._aware_datetime(data["planned_at"]),
             close_reason=CloseReason(data["close_reason"]),
             refillable=bool(data["refillable"]),
         )
@@ -353,7 +352,7 @@ class SnowballStateSerializer:
             "planned_stop_loss_price": cls._money_to_mapping(
                 entry.planned_stop_loss_price,
             ),
-            "requested_at": entry.requested_at.isoformat(),
+            "planned_at": entry.planned_at.isoformat(),
         }
 
     @classmethod
@@ -367,7 +366,7 @@ class SnowballStateSerializer:
             planned_stop_loss_price=cls._money_from_mapping(
                 data["planned_stop_loss_price"],
             ),
-            requested_at=cls._aware_datetime(data["requested_at"]),
+            planned_at=cls._aware_datetime(data["planned_at"]),
         )
 
     @classmethod

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core import Money, PositionSide
+from core import Money, PositionSide, Units
 
 from snowball.config import SnowballConfig
 from snowball.enums import CounterTakeProfitMode, RebuildTakeProfitMode
@@ -45,7 +45,7 @@ class SnowballTakeProfitPlanner:
         direction: PositionSide,
         retracement_count: int,
         entry_price: Money,
-        units: Decimal,
+        units: Units,
         pip_size: Decimal,
         include_head: FilledEntry | None,
     ) -> Money:
@@ -135,7 +135,7 @@ class SnowballTakeProfitPlanner:
         *,
         layer: Layer,
         new_price: Money,
-        new_units: Decimal,
+        new_units: Units,
         include_ref: FilledEntry | None = None,
     ) -> Money:
         """Compute weighted average of live/pending layer entries plus a new entry."""

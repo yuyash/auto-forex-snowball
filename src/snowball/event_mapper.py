@@ -48,8 +48,8 @@ class SnowballEventMapper:
                 action=StrategyAction.OPEN_TRADE,
                 instrument=tick.instrument,
                 side=self._entry_side(event.direction),
-                units=event.entry.requested_units,
-                price=event.entry.requested_entry_price,
+                units=event.entry.planned_units,
+                price=event.entry.planned_entry_price,
                 reason=StrategyDecisionReason(
                     code=StrategyDecisionCode.ENTRY_SIGNAL,
                     rule_id=self._open_rule_id(metadata),
@@ -117,11 +117,11 @@ class SnowballEventMapper:
                 metadata = metadata.with_value("is_rebuild", False)
         if isinstance(event, SnowballOpenEvent):
             metadata = metadata.merge(self._requested_entry_metadata(event.entry))
-            metadata = metadata.with_value("price", str(event.entry.requested_entry_price))
+            metadata = metadata.with_value("price", str(event.entry.planned_entry_price))
             if self._metadata_bool(metadata.get("is_rebuild", False)):
                 metadata = metadata.with_value(
                     "planned_rebuild_price",
-                    str(event.entry.requested_entry_price),
+                    str(event.entry.planned_entry_price),
                 )
         if isinstance(event, SnowballCloseEvent):
             metadata = metadata.merge(self._filled_entry_metadata(event.entry))
@@ -146,8 +146,8 @@ class SnowballEventMapper:
 
     def _requested_entry_metadata(self, entry: RequestedEntry) -> Metadata:
         return Metadata.of(
-            requested_units=str(entry.requested_units),
-            requested_entry_price=str(entry.requested_entry_price),
+            planned_units=str(entry.planned_units),
+            planned_entry_price=str(entry.planned_entry_price),
             planned_take_profit_price=str(entry.planned_take_profit_price),
             planned_stop_loss_price=(
                 None
@@ -158,8 +158,8 @@ class SnowballEventMapper:
 
     def _filled_entry_metadata(self, entry: FilledEntry) -> Metadata:
         return Metadata.of(
-            requested_units=str(entry.requested.requested_units),
-            requested_entry_price=str(entry.requested.requested_entry_price),
+            planned_units=str(entry.requested.planned_units),
+            planned_entry_price=str(entry.requested.planned_entry_price),
             filled_units=str(entry.filled_units),
             filled_entry_price=str(entry.filled_entry_price),
             planned_take_profit_price=str(entry.planned_take_profit_price),

@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from typing import Any
 
 import pytest
 from core import (
@@ -11,12 +11,14 @@ from core import (
     Order,
     OrderSide,
     OrderStatus,
+    Pips,
     PositionSide,
     StrategyContext,
     StrategyExecutionResponse,
     StrategyParameters,
     TaskType,
     Tick,
+    Units,
     new_uuid,
 )
 from pydantic import AwareDatetime
@@ -74,7 +76,7 @@ def fill_requested_entries(state: SnowballState, *, filled_at: AwareDatetime) ->
                     continue
                 slot.fill_entry(
                     requested.fill(
-                        filled_entry_price=requested.requested_entry_price,
+                        filled_entry_price=requested.planned_entry_price,
                         filled_at=filled_at,
                     )
                 )
@@ -93,9 +95,9 @@ class TestSnowballEngine:
     def test_entry_transition_methods_create_slot_states(self) -> None:
         requested = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
             planned_stop_loss_price=Money.of("149.90", "JPY"),
         )
@@ -127,7 +129,7 @@ class TestSnowballEngine:
 
         requested_stop_loss = filled.stop_loss(
             planned_stop_loss_price=Money.of("149.90", "JPY"),
-            requested_at=datetime(2026, 1, 1, 0, 0, 4, tzinfo=UTC),
+            planned_at=datetime(2026, 1, 1, 0, 0, 4, tzinfo=UTC),
         )
         stop_loss_entry = requested_stop_loss.fill(
             filled_at=datetime(2026, 1, 1, 0, 0, 5, tzinfo=UTC),
@@ -156,9 +158,9 @@ class TestSnowballEngine:
         closed_at = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
         requested_entry = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
         )
         entry = requested_entry.fill(
@@ -170,8 +172,8 @@ class TestSnowballEngine:
         slot.fill_entry(entry)
 
         closed = slot.request_close(
-            requested_at=closed_at,
-            requested_exit_price=Money.of("150.50", "JPY"),
+            planned_at=closed_at,
+            planned_exit_price=Money.of("150.50", "JPY"),
             close_reason=CloseReason.TAKE_PROFIT,
             refillable=False,
         )
@@ -187,22 +189,23 @@ class TestSnowballEngine:
         slot = Slot()
         requested = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
         )
 
+        slot_any: Any = slot
         with pytest.raises(AttributeError):
-            slot.entry = requested  # type: ignore[misc]
+            slot_any.entry = requested
 
     def test_slot_rejects_entry_for_different_grid_position(self) -> None:
         slot = Slot()
         requested = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
         )
 
@@ -220,16 +223,16 @@ class TestSnowballEngine:
     def test_slot_rejects_filled_entry_with_inconsistent_price_shift(self) -> None:
         requested = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=0, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
             planned_stop_loss_price=Money.of("149.90", "JPY"),
         )
         invalid_filled = FilledEntry(
             entry_id=requested.entry_id.with_type(EntryIdType.FILLED_ENTRY),
             requested=requested,
-            filled_units=Decimal("1000"),
+            filled_units=Units("1000"),
             filled_entry_price=Money.of("150.01", "JPY"),
             filled_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
@@ -244,15 +247,15 @@ class TestSnowballEngine:
     def test_cycle_rejects_restored_entry_for_different_slot_position(self) -> None:
         requested = RequestedEntry(
             entry_id=EntryId(cycle_id=1, layer_number=1, slot_number=1, build_number=1),
-            requested_units=Decimal("1000"),
-            requested_entry_price=Money.of("150.00", "JPY"),
-            requested_at=datetime(2026, 1, 1, tzinfo=UTC),
+            planned_units=Units("1000"),
+            planned_entry_price=Money.of("150.00", "JPY"),
+            planned_at=datetime(2026, 1, 1, tzinfo=UTC),
             planned_take_profit_price=Money.of("150.50", "JPY"),
         )
         grid = Grid.from_layers(
             {
                 1: Layer.from_slots(
-                    base_units=Decimal("1000"),
+                    base_units=Units("1000"),
                     slots={0: Slot.restore(requested)},
                     build_numbers={0: 1},
                 )
@@ -263,8 +266,8 @@ class TestSnowballEngine:
             Cycle.create(cycle_id=1, direction=PositionSide.LONG, grid=grid)
 
     def test_cycle_refresh_status_removes_empty_top_layers(self) -> None:
-        grid = Grid.create(base_units=Decimal("1000"), max_retracements=1)
-        grid.add_layer(base_units=Decimal("2000"), max_retracements=1)
+        grid = Grid.create(base_units=Units("1000"), max_retracements=1)
+        grid.add_layer(base_units=Units("2000"), max_retracements=1)
         cycle = Cycle.create(cycle_id=1, direction=PositionSide.LONG, grid=grid)
 
         cycle.refresh_status()
@@ -312,7 +315,7 @@ class TestSnowballEngine:
         assert counter is not None
         assert result.state.cycles[0].grid.layer_number(layer) == 1
         assert layer.retracement_count(slot) == 1
-        assert counter.requested_units == Decimal("2000")
+        assert counter.planned_units == Units("2000")
         assert result.events[0].metadata["actual_interval_pips"] == "30"
 
     def test_stop_loss_default_auto_uses_next_counter_interval(self) -> None:
@@ -372,8 +375,8 @@ class TestSnowballEngine:
         assert len(result.events) == 1
         assert isinstance(result.events[0], SnowballOpenEvent)
         assert requested_entry is result.events[0].entry
-        assert requested_entry.requested_entry_price == Money.of("149.42", "JPY")
-        assert requested_entry.requested_entry_price != third_tick.ask
+        assert requested_entry.planned_entry_price == Money.of("149.42", "JPY")
+        assert requested_entry.planned_entry_price != third_tick.ask
         assert result.events[0].metadata["expected_interval_pips"] == "30"
         assert result.events[0].metadata["actual_interval_pips"] == "70"
 
@@ -411,8 +414,8 @@ class TestSnowballEngine:
                 enabled=True,
                 mode=StopLossMode.DISTANCE,
                 distance=PipProgressionConfig(
-                    head_pips=Decimal("10"),
-                    tail_pips=Decimal("10"),
+                    head_pips=Pips("10"),
+                    tail_pips=Pips("10"),
                     flat_steps=0,
                 ),
             ),
@@ -480,7 +483,7 @@ class TestSnowballEngine:
         assert isinstance(rebuilt.events[0], SnowballOpenEvent)
         assert rebuilt_entry is not None
         assert rebuilt_entry.entry_id.build_number == 2
-        assert rebuilt_entry.requested_entry_price == Money.of("149.92", "JPY")
+        assert rebuilt_entry.planned_entry_price == Money.of("149.92", "JPY")
         assert rebuilt_layer.build_number(rebuilt_slot) == 2
         assert rebuilt.state.cycles[0].active
 
@@ -530,6 +533,7 @@ class TestSnowballStrategy:
         assert result.events[0].metadata["layer_number"] == 1
         assert result.events[0].metadata["build_number"] == 1
         assert result.events[0].metadata["cycle_id"] == 1
+        assert result.events[0].metadata["planned_entry_price"] == "150.02 JPY"
         assert result.state["snowball"]["cycles"][0]["cycle_id"] == 1
 
         filled_state = strategy.on_execution_reports(
@@ -539,10 +543,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.BUY,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("150.02", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("150.02", "JPY"),
                     ),
                 ),
@@ -563,6 +567,8 @@ class TestSnowballStrategy:
         assert close_result.events[0].display_id == "L1R0B1"
         assert close_result.events[0].reason.rule_id == "snowball.close.take_profit"
         assert close_result.events[0].metadata["close_reason"] == "take_profit"
+        assert close_result.events[0].metadata["planned_entry_price"] == "150.02 JPY"
+        assert close_result.events[0].metadata["filled_entry_price"] == "150.02 JPY"
         requested_close_slot = close_result.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
             "slots"
         ]["0"]
@@ -579,10 +585,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.SELL,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("150.52", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("150.52", "JPY"),
                     ),
                 ),
@@ -620,10 +626,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.BUY,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("150.02", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("150.05", "JPY"),
                     ),
                 ),
@@ -634,7 +640,7 @@ class TestSnowballStrategy:
         filled_entry = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
             "0"
         ]["filled_entry"]
-        assert filled_entry["requested_entry_price"]["amount"] == "150.02"
+        assert filled_entry["planned_entry_price"]["amount"] == "150.02"
         assert filled_entry["planned_take_profit_price"]["amount"] == "150.52"
         assert filled_entry["planned_stop_loss_price"]["amount"] == "149.72"
         assert filled_entry["filled_entry_price"]["amount"] == "150.05"
@@ -680,10 +686,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.BUY,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("150.02", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("150.02", "JPY"),
                     ),
                 ),
@@ -704,10 +710,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.SELL,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("149.90", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("149.88", "JPY"),
                     ),
                 ),
@@ -733,12 +739,13 @@ class TestSnowballStrategy:
         assert rebuilt.events[0].display_id == "L1R0B2"
         assert rebuilt.events[0].reason.rule_id == "snowball.open.rebuild"
         assert rebuilt.events[0].metadata["is_rebuild"] is True
+        assert rebuilt.events[0].metadata["planned_entry_price"] == "149.92 JPY"
         assert rebuilt.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
         requested_rebuild = rebuilt.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
             "slots"
         ]["0"]["requested_entry"]
         assert rebuilt.events[0].price == Money.of("149.92", "JPY")
-        assert requested_rebuild["requested_entry_price"]["amount"] == "149.92"
+        assert requested_rebuild["planned_entry_price"]["amount"] == "149.92"
         assert requested_rebuild["planned_take_profit_price"]["amount"] == "150.42"
 
         rebuild_filled = strategy.on_execution_reports(
@@ -748,10 +755,10 @@ class TestSnowballStrategy:
                     order=Order(
                         instrument=USD_JPY,
                         side=OrderSide.BUY,
-                        units=Decimal("1000"),
+                        units=Units("1000"),
                         price=Money.of("149.92", "JPY"),
                         status=OrderStatus.FILLED,
-                        filled_units=Decimal("1000"),
+                        filled_units=Units("1000"),
                         average_fill_price=Money.of("149.95", "JPY"),
                     ),
                 ),
@@ -791,4 +798,4 @@ class TestSnowballStateSerialization:
         assert restored_entry is not None
         assert restored_entry.entry_id == event.entry.entry_id
         assert restored_entry.entry_id.entry_type == EntryIdType.REQUESTED_ENTRY
-        assert restored_entry.requested_entry_price == Money.of("150.02", "JPY")
+        assert restored_entry.planned_entry_price == Money.of("150.02", "JPY")

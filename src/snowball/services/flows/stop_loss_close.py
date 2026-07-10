@@ -55,7 +55,7 @@ class SnowballStopLossCloseService:
                 if planned_stop_loss_price is None:
                     continue
                 slot.request_stop_loss(
-                    requested_at=tick.timestamp,
+                    planned_at=tick.timestamp,
                     planned_stop_loss_price=planned_stop_loss_price,
                 )
                 exit_price = self.pricing.exit_side_price(cycle.direction, tick)

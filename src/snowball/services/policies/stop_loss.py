@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core import Money, PositionSide, Tick
+from core import Money, Pips, PositionSide, Tick
 
 from snowball.config import SnowballConfig
 from snowball.enums import RebuildEntryPriceMode, RebuildStopLossMode, StopLossMode
@@ -154,7 +154,7 @@ class SnowballStopLossPlanner:
             buffer_pips = self.config.rebuild.price.buffer_pips
         else:
             base_price = original_entry_price
-            buffer_pips = Decimal("0")
+            buffer_pips = Pips("0")
         return self.pricing.directional_buffer_price(
             direction=direction,
             price=base_price,

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any, Self
 
-from core import Currency, Money, StrategyParameters
+from core import Currency, MarginRate, Money, Percent, Pips, StrategyParameters, Units
 
 from snowball.config_parsing import (
     bool_value,
@@ -34,16 +34,41 @@ from snowball.enums import (
 )
 
 
+def pips_value(value: Any) -> Pips:
+    """Parse a pips value from raw configuration."""
+    return Pips.of(decimal_value(value))
+
+
+def pips_tuple(value: Any) -> tuple[Pips, ...]:
+    """Parse a tuple of pips values from raw configuration."""
+    return tuple(Pips.of(item) for item in decimal_tuple(value))
+
+
+def units_value(value: Any) -> Units:
+    """Parse entry units from raw configuration."""
+    return Units.of(decimal_value(value))
+
+
+def percent_value(value: Any) -> Percent:
+    """Parse a percentage from raw configuration."""
+    return Percent.of(decimal_value(value))
+
+
+def margin_rate_value(value: Any) -> MarginRate:
+    """Parse a margin rate from raw configuration."""
+    return MarginRate.of(decimal_value(value))
+
+
 @dataclass(frozen=True, slots=True)
 class PipProgressionConfig:
     """Pip-distance progression from a head value to a tail value."""
 
     mode: IntervalMode = IntervalMode.CONSTANT
-    head_pips: Decimal = Decimal("30")
-    tail_pips: Decimal = Decimal("14")
+    head_pips: Pips = field(default_factory=lambda: Pips("30"))
+    tail_pips: Pips = field(default_factory=lambda: Pips("14"))
     flat_steps: int = 2
     gamma: Decimal = Decimal("1.4")
-    manual_pips: tuple[Decimal, ...] = ()
+    manual_pips: tuple[Pips, ...] = ()
 
     @classmethod
     def from_mapping(
@@ -59,11 +84,11 @@ class PipProgressionConfig:
         changes = parse_changes(
             values,
             mode=lambda value: enum_value(IntervalMode, value),
-            head_pips=decimal_value,
-            tail_pips=decimal_value,
+            head_pips=pips_value,
+            tail_pips=pips_value,
             flat_steps=int_value,
             gamma=decimal_value,
-            manual_pips=decimal_tuple,
+            manual_pips=pips_tuple,
         )
         return replace(config, **changes)
 
@@ -84,7 +109,7 @@ class PipProgressionConfig:
 class PositionSizingConfig:
     """Unit sizing for Snowball entries."""
 
-    base_units: Decimal = Decimal("1000")
+    base_units: Units = field(default_factory=lambda: Units("1000"))
     initial_entry_units_multiplier: Decimal = Decimal("1")
     additional_layer_base_units_multiplier: Decimal = Decimal("1")
 
@@ -98,7 +123,7 @@ class PositionSizingConfig:
             config,
             **parse_changes(
                 values,
-                base_units=decimal_value,
+                base_units=units_value,
                 initial_entry_units_multiplier=decimal_value,
                 additional_layer_base_units_multiplier=decimal_value,
             ),
@@ -116,16 +141,16 @@ class PositionSizingConfig:
             "sizing.additional_layer_base_units_multiplier",
         )
 
-    def layer_base_units(self, layer_number: int) -> Decimal:
+    def layer_base_units(self, layer_number: int) -> Units:
         """Return the base units for a layer."""
         if layer_number <= 1:
             return self.base_units
-        return self.base_units * self.additional_layer_base_units_multiplier
+        return Units.of(self.base_units * self.additional_layer_base_units_multiplier)
 
     @property
-    def initial_entry_units(self) -> Decimal:
+    def initial_entry_units(self) -> Units:
         """Return units for initial and layer-initial entries."""
-        return self.base_units * self.initial_entry_units_multiplier
+        return Units.of(self.base_units * self.initial_entry_units_multiplier)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +227,7 @@ class GridConfig:
 class CycleConfig:
     """Cycle-level Snowball behavior."""
 
-    take_profit_pips: Decimal = Decimal("50")
+    take_profit_pips: Pips = field(default_factory=lambda: Pips("50"))
     hedging_enabled: bool = True
     reseed_when_all_positions_pending_rebuild: bool = False
 
@@ -216,7 +241,7 @@ class CycleConfig:
             config,
             **parse_changes(
                 values,
-                take_profit_pips=decimal_value,
+                take_profit_pips=pips_value,
                 hedging_enabled=bool_value,
                 reseed_when_all_positions_pending_rebuild=bool_value,
             ),
@@ -232,8 +257,8 @@ class CounterTakeProfitConfig:
     """Take-profit policy for R1+ counter entries."""
 
     mode: CounterTakeProfitMode = CounterTakeProfitMode.WEIGHTED_AVG
-    fixed_pips: Decimal = Decimal("5")
-    step_pips: Decimal = Decimal("1")
+    fixed_pips: Pips = field(default_factory=lambda: Pips("5"))
+    step_pips: Pips = field(default_factory=lambda: Pips("1"))
     multiplier: Decimal = Decimal("1.2")
 
     @classmethod
@@ -250,8 +275,8 @@ class CounterTakeProfitConfig:
             **parse_changes(
                 values,
                 mode=lambda value: enum_value(CounterTakeProfitMode, value),
-                fixed_pips=decimal_value,
-                step_pips=decimal_value,
+                fixed_pips=pips_value,
+                step_pips=pips_value,
                 multiplier=decimal_value,
             ),
         )
@@ -332,8 +357,8 @@ class StopLossConfig:
     mode: StopLossMode = StopLossMode.AUTO
     distance: PipProgressionConfig = PipProgressionConfig(
         mode=IntervalMode.CONSTANT,
-        head_pips=Decimal("50"),
-        tail_pips=Decimal("20"),
+        head_pips=Pips("50"),
+        tail_pips=Pips("20"),
         flat_steps=0,
     )
     protect_highest_retracement: StopLossProtectionConfig = StopLossProtectionConfig()
@@ -377,7 +402,7 @@ class RebuildPriceConfig:
     """Planned rebuild price policy for stopped slots waiting for rebuild."""
 
     entry_price_mode: RebuildEntryPriceMode = RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
-    buffer_pips: Decimal = Decimal("0")
+    buffer_pips: Pips = field(default_factory=lambda: Pips("0"))
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> RebuildPriceConfig:
@@ -390,7 +415,7 @@ class RebuildPriceConfig:
             **parse_changes(
                 values,
                 entry_price_mode=lambda value: enum_value(RebuildEntryPriceMode, value),
-                buffer_pips=decimal_value,
+                buffer_pips=pips_value,
             ),
         )
 
@@ -400,7 +425,7 @@ class RebuildStopLossConfig:
     """Stop-loss policy for rebuilt entries."""
 
     mode: RebuildStopLossMode = RebuildStopLossMode.SAME_DISTANCE
-    manual_distances_pips: tuple[Decimal, ...] = ()
+    manual_distances_pips: tuple[Pips, ...] = ()
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> RebuildStopLossConfig:
@@ -413,7 +438,7 @@ class RebuildStopLossConfig:
             **parse_changes(
                 values,
                 mode=lambda value: enum_value(RebuildStopLossMode, value),
-                manual_distances_pips=decimal_tuple,
+                manual_distances_pips=pips_tuple,
             ),
         )
 
@@ -434,8 +459,8 @@ class RebuildTakeProfitConfig:
     mode: RebuildTakeProfitMode = RebuildTakeProfitMode.SAME_DISTANCE
     distance: PipProgressionConfig = PipProgressionConfig(
         mode=IntervalMode.ADDITIVE,
-        head_pips=Decimal("25"),
-        tail_pips=Decimal("10"),
+        head_pips=Pips("25"),
+        tail_pips=Pips("10"),
         flat_steps=0,
     )
 
@@ -505,10 +530,10 @@ class ProtectionConfig:
     """Margin protection behavior."""
 
     shrink_enabled: bool = False
-    shrink_start_margin_percent: Decimal = Decimal("70")
-    shrink_target_margin_percent: Decimal = Decimal("50")
+    shrink_start_margin_percent: Percent = field(default_factory=lambda: Percent("70"))
+    shrink_target_margin_percent: Percent = field(default_factory=lambda: Percent("50"))
     emergency_enabled: bool = True
-    emergency_margin_percent: Decimal = Decimal("95")
+    emergency_margin_percent: Percent = field(default_factory=lambda: Percent("95"))
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> ProtectionConfig:
@@ -521,10 +546,10 @@ class ProtectionConfig:
             **parse_changes(
                 values,
                 shrink_enabled=bool_value,
-                shrink_start_margin_percent=decimal_value,
-                shrink_target_margin_percent=decimal_value,
+                shrink_start_margin_percent=percent_value,
+                shrink_target_margin_percent=percent_value,
                 emergency_enabled=bool_value,
-                emergency_margin_percent=decimal_value,
+                emergency_margin_percent=percent_value,
             ),
         )
 
@@ -550,7 +575,7 @@ class AccountValuationConfig:
 
     currency: Currency = field(default_factory=lambda: Currency.of("USD"))
     balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
-    margin_rate: Decimal = Decimal("0.04")
+    margin_rate: MarginRate = field(default_factory=lambda: MarginRate("0.04"))
     quote_to_account_rate: Decimal = Decimal("1")
 
     @classmethod
@@ -571,7 +596,7 @@ class AccountValuationConfig:
             balance=balance,
             **parse_changes(
                 values,
-                margin_rate=decimal_value,
+                margin_rate=margin_rate_value,
                 quote_to_account_rate=decimal_value,
             ),
         )

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 
-from core import Money, PositionSide, Tick
+from core import Money, PositionSide, Tick, Units
 
 from snowball.enums import EntryRole
 from snowball.models.entries import FilledEntry, FilledStopLossEntry, RequestedEntry
@@ -174,22 +173,22 @@ class SnowballEntryService:
         entry_price: Money,
         take_profit_price: Money,
         rebuild_source: FilledStopLossEntry | None = None,
-        units: Decimal | None = None,
+        units: Units | None = None,
     ) -> RequestedEntry:
-        requested_units = (
+        planned_units = (
             self.position_sizer.entry_units(
                 role=role,
                 layer=layer,
                 retracement_count=retracement_count,
             )
             if units is None
-            else units
+            else Units.of(units)
         )
         return RequestedEntry(
             entry_id=entry_id,
-            requested_units=requested_units,
-            requested_entry_price=entry_price,
-            requested_at=tick.timestamp,
+            planned_units=planned_units,
+            planned_entry_price=entry_price,
+            planned_at=tick.timestamp,
             planned_take_profit_price=take_profit_price,
             planned_stop_loss_price=self.stop_loss_planner.entry_stop_loss_price(
                 tick=tick,

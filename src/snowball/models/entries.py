@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core import Money
+from core import Money, Units
 from pydantic import AwareDatetime
 
 from snowball.enums import CloseReason
@@ -18,17 +18,17 @@ class RequestedEntry:
 
     Attributes:
         entry_id: Stable entry identifier assigned from the cycle and slot.
-        requested_units: Position size requested for the slot.
-        requested_entry_price: Price used when requesting the entry.
-        requested_at: Tick timestamp when the entry was requested.
+        planned_units: Planned position size for the slot.
+        planned_entry_price: Planned entry price.
+        planned_at: Tick timestamp when the entry was planned.
         planned_take_profit_price: Planned take-profit exit price.
         planned_stop_loss_price: Planned stop-loss exit price, when stop loss is enabled.
     """
 
     entry_id: EntryId
-    requested_units: Decimal
-    requested_entry_price: Money
-    requested_at: AwareDatetime
+    planned_units: Units
+    planned_entry_price: Money
+    planned_at: AwareDatetime
     planned_take_profit_price: Money
     planned_stop_loss_price: Money | None = None
 
@@ -38,23 +38,24 @@ class RequestedEntry:
             "entry_id",
             self.entry_id.with_type(EntryIdType.REQUESTED_ENTRY),
         )
+        object.__setattr__(self, "planned_units", Units.of(self.planned_units))
 
     def fill(
         self,
         *,
         filled_entry_price: Money,
         filled_at: AwareDatetime,
-        filled_units: Decimal | None = None,
+        filled_units: Units | None = None,
     ) -> FilledEntry:
         """Return a filled entry from this requested entry."""
-        fill_delta = (filled_entry_price - self.requested_entry_price).amount
+        fill_delta = (filled_entry_price - self.planned_entry_price).amount
         return FilledEntry(
             entry_id=self.entry_id.with_type(EntryIdType.FILLED_ENTRY),
             requested=self,
-            filled_units=self.requested_units if filled_units is None else filled_units,
+            filled_units=self.planned_units if filled_units is None else Units.of(filled_units),
             filled_entry_price=filled_entry_price,
             filled_at=filled_at,
-            planned_take_profit_price=self._shift_money(
+            planned_take_profit_price=self._shift_required_money(
                 self.planned_take_profit_price,
                 fill_delta,
             ),
@@ -69,6 +70,13 @@ class RequestedEntry:
         if value is None or not delta:
             return value
         return Money.of(value.amount + delta, value.currency)
+
+    @classmethod
+    def _shift_required_money(cls, value: Money, delta: Decimal) -> Money:
+        shifted = cls._shift_money(value, delta)
+        if shifted is None:
+            raise ValueError("required money value cannot be None")
+        return shifted
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +95,7 @@ class FilledEntry:
 
     entry_id: EntryId
     requested: RequestedEntry
-    filled_units: Decimal
+    filled_units: Units
     filled_entry_price: Money
     filled_at: AwareDatetime
     planned_take_profit_price: Money
@@ -95,6 +103,7 @@ class FilledEntry:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entry_id", self.entry_id.with_type(EntryIdType.FILLED_ENTRY))
+        object.__setattr__(self, "filled_units", Units.of(self.filled_units))
 
     def close(
         self,
@@ -110,8 +119,8 @@ class FilledEntry:
     def request_close(
         self,
         *,
-        requested_exit_price: Money,
-        requested_at: AwareDatetime,
+        planned_exit_price: Money,
+        planned_at: AwareDatetime,
         close_reason: CloseReason,
         refillable: bool,
     ) -> RequestedCloseEntry:
@@ -119,8 +128,8 @@ class FilledEntry:
         return RequestedCloseEntry(
             entry_id=self.entry_id.with_type(EntryIdType.REQUESTED_CLOSE_ENTRY),
             original_entry=self,
-            requested_exit_price=requested_exit_price,
-            requested_at=requested_at,
+            planned_exit_price=planned_exit_price,
+            planned_at=planned_at,
             close_reason=close_reason,
             refillable=refillable,
         )
@@ -129,14 +138,14 @@ class FilledEntry:
         self,
         *,
         planned_stop_loss_price: Money,
-        requested_at: AwareDatetime,
+        planned_at: AwareDatetime,
     ) -> RequestedStopLossEntry:
         """Return a requested stop-loss close for this entry."""
         return RequestedStopLossEntry(
             entry_id=self.entry_id.with_type(EntryIdType.REQUESTED_STOP_LOSS_ENTRY),
             original_entry=self,
             planned_stop_loss_price=planned_stop_loss_price,
-            requested_at=requested_at,
+            planned_at=planned_at,
         )
 
     def seal(self, *, sealed_at: AwareDatetime) -> SealedEntry:
@@ -154,16 +163,16 @@ class RequestedCloseEntry:
     Attributes:
         entry_id: Stable entry identifier for the requested close state.
         original_entry: FilledEntry state before the close request.
-        requested_exit_price: Price used when requesting the close.
-        requested_at: Tick timestamp when the close was requested.
+        planned_exit_price: Planned close price.
+        planned_at: Tick timestamp when the close was planned.
         close_reason: Strategy reason for the close request.
         refillable: Whether the slot can be reused after broker fill.
     """
 
     entry_id: EntryId
     original_entry: FilledEntry
-    requested_exit_price: Money
-    requested_at: AwareDatetime
+    planned_exit_price: Money
+    planned_at: AwareDatetime
     close_reason: CloseReason
     refillable: bool
 
@@ -180,7 +189,7 @@ class RequestedCloseEntry:
         return self.original_entry.filled_entry_price
 
     @property
-    def filled_units(self) -> Decimal:
+    def filled_units(self) -> Units:
         """Return the original filled units of the close request."""
         return self.original_entry.filled_units
 
@@ -209,13 +218,13 @@ class RequestedStopLossEntry:
         entry_id: Stable entry identifier for the requested stop-loss state.
         original_entry: FilledEntry state before the stop-loss close.
         planned_stop_loss_price: Planned stop-loss price used when requesting the close.
-        requested_at: Tick timestamp when the stop-loss close was requested.
+        planned_at: Tick timestamp when the stop-loss close was planned.
     """
 
     entry_id: EntryId
     original_entry: FilledEntry
     planned_stop_loss_price: Money
-    requested_at: AwareDatetime
+    planned_at: AwareDatetime
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -230,7 +239,7 @@ class RequestedStopLossEntry:
         return self.original_entry.filled_entry_price
 
     @property
-    def filled_units(self) -> Decimal:
+    def filled_units(self) -> Units:
         """Return the original filled units of the stop-loss request."""
         return self.original_entry.filled_units
 
@@ -297,7 +306,7 @@ class FilledStopLossEntry:
         return self.original_entry.filled_entry_price
 
     @property
-    def filled_units(self) -> Decimal:
+    def filled_units(self) -> Units:
         """Return the original filled units of the filled stop-loss entry."""
         return self.original_entry.filled_units
 

@@ -52,8 +52,8 @@ class SnowballTakeProfitCloseService:
                 else CloseReason.COUNTER_TAKE_PROFIT
             )
             slot.request_close(
-                requested_at=tick.timestamp,
-                requested_exit_price=exit_price,
+                planned_at=tick.timestamp,
+                planned_exit_price=exit_price,
                 close_reason=close_reason,
                 refillable=refillable_counter,
             )
@@ -95,8 +95,8 @@ class SnowballTakeProfitCloseService:
 
         exit_price = self.pricing.exit_side_price(cycle.direction, tick)
         slot.request_close(
-            requested_at=tick.timestamp,
-            requested_exit_price=exit_price,
+            planned_at=tick.timestamp,
+            planned_exit_price=exit_price,
             close_reason=CloseReason.TAKE_PROFIT,
             refillable=False,
         )
