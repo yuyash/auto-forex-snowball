@@ -24,7 +24,6 @@ from snowball.events import (
     SnowballStopEvent,
 )
 from snowball.models.entries import FilledEntry, RequestedEntry
-from snowball.models.identifiers import EntryId
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +43,7 @@ class SnowballEventMapper:
             return StrategyEventRequest(
                 timestamp=tick.timestamp,
                 task_id=context.task_id,
-                display_id=self._display_id(event.entry.entry_id),
+                display_id=event.entry.entry_id.display_id,
                 action=StrategyAction.OPEN_TRADE,
                 instrument=tick.instrument,
                 side=self._entry_side(event.direction),
@@ -61,7 +60,7 @@ class SnowballEventMapper:
             return StrategyEventRequest(
                 timestamp=tick.timestamp,
                 task_id=context.task_id,
-                display_id=self._display_id(event.entry.entry_id),
+                display_id=event.entry.entry_id.display_id,
                 action=StrategyAction.CLOSE_TRADE,
                 instrument=tick.instrument,
                 side=self._close_side(event.direction),
@@ -169,9 +168,6 @@ class SnowballEventMapper:
                 else str(entry.planned_stop_loss_price)
             ),
         )
-
-    def _display_id(self, entry_id: EntryId) -> str:
-        return f"L{entry_id.layer_number}R{entry_id.slot_number}B{entry_id.build_number}"
 
     @staticmethod
     def _metadata_bool(value: object) -> bool:

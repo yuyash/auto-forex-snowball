@@ -61,6 +61,7 @@ class SnowballServiceContainer:
     counter_service: SnowballCounterService = field(init=False)
     cycle_processor: SnowballCycleProcessor = field(init=False)
     tick_stages: tuple[SnowballTickStage, ...] = field(init=False)
+    requires_accounting: bool = field(init=False)
 
     def __post_init__(self) -> None:
         self.calculator = SnowballCalculator(self.config)
@@ -130,9 +131,14 @@ class SnowballServiceContainer:
                 CounterAddCycleStage(self.grid_policy, self.counter_service),
             )
         )
+        protection_stages: tuple[SnowballTickStage, ...] = ()
+        if self.config.protection.emergency_enabled:
+            protection_stages += (EmergencyStage(self.protection_service),)
+        if self.config.protection.shrink_enabled:
+            protection_stages += (ShrinkStage(self.protection_service),)
+        self.requires_accounting = bool(protection_stages)
         self.tick_stages = (
-            EmergencyStage(self.protection_service),
-            ShrinkStage(self.protection_service),
+            *protection_stages,
             InitialCycleStage(self.cycle_service),
             ProcessCyclesStage(self.cycle_processor),
             ReseedCycleStage(self.cycle_service),

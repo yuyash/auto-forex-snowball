@@ -20,10 +20,10 @@ class SnowballGridSelector:
         head = cycle.head()
         if head is not None:
             return head
-        for _layer, slot in cycle.grid.requested_stop_loss_slots():
+        for _layer, slot in cycle.grid.iter_requested_stop_loss_slots():
             if slot.requested_stop_loss_entry is not None:
                 return slot.requested_stop_loss_entry.original_entry
-        for _layer, slot in cycle.grid.filled_stop_loss_slots():
+        for _layer, slot in cycle.grid.iter_filled_stop_loss_slots():
             if slot.filled_stop_loss_entry is not None:
                 return slot.filled_stop_loss_entry.original_entry
         return None
@@ -35,19 +35,19 @@ class SnowballGridSelector:
         max_refillable_retracement: int,
     ) -> Slot | None:
         """Return the next R1+ slot that can receive a counter entry."""
-        slot_numbers = [slot_number for slot_number in layer.slot_numbers if slot_number > 0]
-        for retracement_count in slot_numbers:
-            slot = layer.slot(retracement_count)
+        highest_present_slot_number = layer.highest_present_slot_number()
+        for retracement_count, slot in layer.iter_slot_items():
+            if retracement_count <= 0:
+                continue
             if slot.is_sealed:
                 return None
             if slot.entry is not None:
                 continue
             if retracement_count > max_refillable_retracement and layer.build_number(slot) > 0:
                 return None
-            higher_present = any(
-                layer.slot(higher_number).is_present
-                for higher_number in slot_numbers
-                if higher_number > retracement_count
+            higher_present = (
+                highest_present_slot_number is not None
+                and highest_present_slot_number > retracement_count
             )
             if higher_present and layer.build_number(slot) > 0:
                 continue
@@ -69,8 +69,8 @@ class SnowballGridSelector:
 
     def shrink_front_entry(self, cycle: Cycle) -> FilledEntry | None:
         """Return the lowest L/R live entry eligible as a shrink candidate."""
-        for layer in cycle.grid.layers:
-            for slot in layer.slots:
+        for layer in cycle.grid.iter_layers():
+            for slot in layer.iter_slots():
                 if slot.filled_entry is not None:
                     return slot.filled_entry
         return None

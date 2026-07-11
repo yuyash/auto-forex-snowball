@@ -141,7 +141,7 @@ class SnowballTakeProfitPlanner:
         """Compute weighted average of live/pending layer entries plus a new entry."""
         total_cost = new_price.amount * new_units
         total_units = new_units
-        for slot in layer.slots:
+        for slot in layer.iter_slots():
             reference_price = slot.reference_entry_price()
             reference_units = slot.reference_filled_units()
             if reference_price is None or reference_units is None:

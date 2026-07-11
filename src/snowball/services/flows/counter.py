@@ -72,7 +72,7 @@ class SnowballCounterService:
                 slot=slot,
                 current_entry_price=current_entry_price,
             )
-        if len(cycle.grid.layers) >= self.config.grid.max_layers:
+        if cycle.grid.layer_count >= self.config.grid.max_layers:
             return None
         return self._try_open_next_layer(
             cycle=cycle,
@@ -162,7 +162,7 @@ class SnowballCounterService:
         )
         previous_layer = cycle.grid.current_layer
         layer = cycle.grid.add_layer(
-            base_units=self.config.sizing.layer_base_units(len(cycle.grid.layers) + 1),
+            base_units=self.config.sizing.layer_base_units(cycle.grid.layer_count + 1),
             max_retracements=self.config.grid.max_retracements_per_layer,
         )
         slot = layer.r0

@@ -265,11 +265,11 @@ class CounterTakeProfitConfig:
         return replace(
             config,
             **parse_changes(
-            values,
-            mode=lambda value: enum_value(CounterTakeProfitMode, value),
-            fixed_pips=Pips.of,
-            step_pips=Pips.of,
-            multiplier=decimal_value,
+                values,
+                mode=lambda value: enum_value(CounterTakeProfitMode, value),
+                fixed_pips=Pips.of,
+                step_pips=Pips.of,
+                multiplier=decimal_value,
             ),
         )
 

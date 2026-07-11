@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Self
@@ -103,12 +103,14 @@ class Cycle:
         """Return the next entry identifier for a slot in this cycle."""
         return self.grid.next_entry_id(cycle_id=self.cycle_id, layer=layer, slot=slot)
 
-    def refresh_status(self) -> None:
+    def refresh_status(self, *, validate: bool = False) -> None:
         """Normalize the grid and update the lifecycle status from current contents."""
-        self.grid.validate_for_cycle(self.cycle_id)
+        if validate:
+            self.grid.validate_for_cycle(self.cycle_id)
         self.grid.remove_empty_top_layers()
-        self.grid.validate_for_cycle(self.cycle_id)
-        has_live = bool(self.grid.all_live_entries())
+        if validate:
+            self.grid.validate_for_cycle(self.cycle_id)
+        has_live = self.grid.has_live_entries()
         has_requested_entry = self.grid.has_requested_entries()
         has_requested_close = self.grid.has_requested_closes()
         has_requested_stop_loss = self.grid.has_requested_stop_losses()
@@ -147,6 +149,14 @@ class SnowballState:
         """Return cycles currently carrying live or pending work."""
         return tuple(self._cycles)
 
+    def iter_cycles(self) -> Iterator[Cycle]:
+        """Iterate cycles without allocating a tuple."""
+        return iter(self._cycles)
+
+    def has_cycles(self) -> bool:
+        """Return True when the state contains any cycle."""
+        return bool(self._cycles)
+
     def add_cycle(self, cycle: Cycle) -> None:
         """Add a cycle to state."""
         self._cycles.append(cycle)
@@ -168,6 +178,10 @@ class SnowballState:
         """Return active cycles."""
         return [cycle for cycle in self._cycles if cycle.active]
 
+    def iter_active_cycles(self) -> Iterator[Cycle]:
+        """Iterate active cycles without allocating a list."""
+        return (cycle for cycle in self._cycles if cycle.active)
+
     def active_cycle_for(self, direction: PositionSide) -> Cycle | None:
         """Return the first active cycle for a direction."""
         for cycle in self._cycles:
@@ -178,7 +192,7 @@ class SnowballState:
     def live_entries(self) -> list[FilledEntry]:
         """Return all live entries."""
         entries: list[FilledEntry] = []
-        for cycle in self._cycles:
+        for cycle in self.iter_cycles():
             entries.extend(cycle.live_entries())
         return entries
 
@@ -186,7 +200,7 @@ class SnowballState:
         """Return total long and short units."""
         long_units = Decimal("0")
         short_units = Decimal("0")
-        for cycle in self._cycles:
+        for cycle in self.iter_cycles():
             for entry in cycle.live_entries():
                 if cycle.direction == PositionSide.LONG:
                     long_units += entry.filled_units

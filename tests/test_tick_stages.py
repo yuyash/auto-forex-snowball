@@ -5,7 +5,7 @@ from decimal import Decimal
 from core import CurrencyPair, Money, Tick
 
 from snowball.composition import SnowballServiceContainer
-from snowball.config import SnowballConfig
+from snowball.config import ProtectionConfig, SnowballConfig
 from snowball.engine import SnowballEngine
 from snowball.models.state import SnowballState
 from snowball.services.stages.tick import SnowballTickContext
@@ -49,12 +49,51 @@ def test_service_container_wires_tick_stages_in_pipeline_order() -> None:
 
     assert [type(stage).__name__ for stage in container.tick_stages] == [
         "EmergencyStage",
+        "InitialCycleStage",
+        "ProcessCyclesStage",
+        "ReseedCycleStage",
+        "FinalizeTickStage",
+    ]
+    assert container.requires_accounting is True
+
+
+def test_service_container_omits_disabled_protection_stages() -> None:
+    container = SnowballServiceContainer(
+        SnowballConfig(
+            protection=ProtectionConfig(
+                emergency_enabled=False,
+                shrink_enabled=False,
+            )
+        )
+    )
+
+    assert [type(stage).__name__ for stage in container.tick_stages] == [
+        "InitialCycleStage",
+        "ProcessCyclesStage",
+        "ReseedCycleStage",
+        "FinalizeTickStage",
+    ]
+    assert container.requires_accounting is False
+
+
+def test_service_container_keeps_shrink_before_cycle_processing_when_enabled() -> None:
+    container = SnowballServiceContainer(
+        SnowballConfig(
+            protection=ProtectionConfig(
+                emergency_enabled=False,
+                shrink_enabled=True,
+            )
+        )
+    )
+
+    assert [type(stage).__name__ for stage in container.tick_stages] == [
         "ShrinkStage",
         "InitialCycleStage",
         "ProcessCyclesStage",
         "ReseedCycleStage",
         "FinalizeTickStage",
     ]
+    assert container.requires_accounting is True
 
 
 def test_engine_stops_pipeline_when_stage_halts_context() -> None:

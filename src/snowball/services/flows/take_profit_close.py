@@ -71,6 +71,7 @@ class SnowballTakeProfitCloseService:
                     metadata=Metadata.of(realized_pl=str(realized)),
                 )
             )
+        if events:
             cycle.refresh_status()
         return events
 
@@ -81,7 +82,7 @@ class SnowballTakeProfitCloseService:
         tick: Tick,
     ) -> list[SnowballEvent]:
         """Close the cycle head when the cycle take-profit is hit."""
-        layer = cycle.grid.layers[0]
+        layer = cycle.grid.first_layer
         slot = layer.r0
         entry = slot.filled_entry
         if entry is None or not self.pricing.take_profit_hit(
@@ -123,9 +124,9 @@ class SnowballTakeProfitCloseService:
         tick: Tick,
     ) -> tuple[Layer, Slot] | None:
         head = cycle.head()
-        for layer in reversed(cycle.grid.layers):
-            live_count = len(layer.live_entries())
-            for slot in reversed(layer.slots):
+        for layer in cycle.grid.reversed_layers():
+            live_count = layer.live_entry_count()
+            for slot in layer.reversed_slots():
                 entry = slot.filled_entry
                 if entry is None or entry is head:
                     continue

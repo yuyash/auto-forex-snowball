@@ -117,7 +117,7 @@ class SnowballProtectionService:
     ) -> tuple[Cycle, Layer, Slot, FilledEntry] | None:
         pip_size = tick.instrument.pip_size
         candidates: list[tuple[Pips, Cycle, Layer, Slot, FilledEntry]] = []
-        for cycle in state.active_cycles():
+        for cycle in state.iter_active_cycles():
             entry = self.grid_selector.shrink_front_entry(cycle)
             if entry is None or not self.pricing.can_close_on_tick(entry=entry, tick=tick):
                 continue

@@ -15,6 +15,7 @@ from core import (
 )
 
 from snowball.config import SnowballConfig
+from snowball.models.state import SnowballState
 from snowball.runtime import SnowballRuntime
 
 
@@ -70,3 +71,12 @@ class SnowballStrategy(Strategy):
     def config(self) -> SnowballConfig:
         """Return normalized Snowball config."""
         return self._config
+
+    @property
+    def state(self) -> SnowballState:
+        """Return the current Snowball runtime state."""
+        return self._runtime.state
+
+    def strategy_state(self) -> StrategyState:
+        """Return the current Snowball runtime state serialized for Core."""
+        return self._runtime.strategy_state()

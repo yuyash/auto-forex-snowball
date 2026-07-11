@@ -35,9 +35,9 @@ class SnowballStopLossCloseService:
             return []
         pip_size = tick.instrument.pip_size
         events: list[SnowballEvent] = []
-        for layer in list(reversed(cycle.grid.layers)):
+        for layer in cycle.grid.reversed_layers():
             highest = layer.highest_live_slot()
-            for slot in list(reversed(layer.slots)):
+            for slot in layer.reversed_slots():
                 entry = slot.filled_entry
                 if entry is None or not self.pricing.stop_loss_hit(
                     direction=cycle.direction,
@@ -92,5 +92,6 @@ class SnowballStopLossCloseService:
                         ),
                     )
                 )
-        cycle.refresh_status()
+        if events:
+            cycle.refresh_status()
         return events

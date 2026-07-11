@@ -114,8 +114,10 @@ class TestSnowballEngine:
             filled.__setattr__("planned_take_profit_price", Money.of("150.60", "JPY"))
         assert requested.entry_id.entry_type == EntryIdType.REQUESTED_ENTRY
         assert requested.entry_id.value == "C1:L1:S0:REQ:B1"
+        assert requested.entry_id.display_id == "C1L1R0B1"
         assert filled.entry_id.entry_type == EntryIdType.FILLED_ENTRY
         assert filled.entry_id.value == "C1:L1:S0:FIL:B1"
+        assert filled.entry_id.display_id == "C1L1R0B1"
         assert (
             filled.close(
                 closed_at=datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC),
@@ -527,14 +529,16 @@ class TestSnowballStrategy:
         )
 
         assert result.events[0].action.value == "open_trade"
-        assert result.events[0].display_id == "L1R0B1"
+        assert result.events[0].display_id == "C1L1R0B1"
         assert result.events[0].metadata["strategy_type"] == "snowball"
         assert result.events[0].metadata["entry_type"] == EntryIdType.REQUESTED_ENTRY.value
         assert result.events[0].metadata["layer_number"] == 1
         assert result.events[0].metadata["build_number"] == 1
         assert result.events[0].metadata["cycle_id"] == 1
         assert result.events[0].metadata["planned_entry_price"] == "150.02 JPY"
-        assert result.state["snowball"]["cycles"][0]["cycle_id"] == 1
+        result_state = result.state
+        assert result_state is not None
+        assert result_state["snowball"]["cycles"][0]["cycle_id"] == 1
 
         filled_state = strategy.on_execution_reports(
             (
@@ -551,7 +555,7 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(result.state),
+            context.with_state(result_state),
         )
 
         filled_slot = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"]
@@ -564,12 +568,14 @@ class TestSnowballStrategy:
         )
 
         assert close_result.events[0].action.value == "close_trade"
-        assert close_result.events[0].display_id == "L1R0B1"
+        assert close_result.events[0].display_id == "C1L1R0B1"
         assert close_result.events[0].reason.rule_id == "snowball.close.take_profit"
         assert close_result.events[0].metadata["close_reason"] == "take_profit"
         assert close_result.events[0].metadata["planned_entry_price"] == "150.02 JPY"
         assert close_result.events[0].metadata["filled_entry_price"] == "150.02 JPY"
-        requested_close_slot = close_result.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
+        close_result_state = close_result.state
+        assert close_result_state is not None
+        requested_close_slot = close_result_state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
             "slots"
         ]["0"]
         assert requested_close_slot["filled_entry"] is None
@@ -593,7 +599,7 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(close_result.state),
+            context.with_state(close_result_state),
         )
 
         closed_slot = closed_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"]
@@ -618,6 +624,8 @@ class TestSnowballStrategy:
             TickFactory.tick_at(0, bid="150.00", ask="150.02"),
             context,
         )
+        result_state = result.state
+        assert result_state is not None
 
         filled_state = strategy.on_execution_reports(
             (
@@ -634,7 +642,7 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(result.state),
+            context.with_state(result_state),
         )
 
         filled_entry = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"][
@@ -677,8 +685,10 @@ class TestSnowballStrategy:
             TickFactory.tick_at(0, bid="150.00", ask="150.02"),
             context,
         )
-        assert opened.events[0].display_id == "L1R0B1"
+        assert opened.events[0].display_id == "C1L1R0B1"
         assert opened.events[0].reason.rule_id == "snowball.open"
+        opened_state = opened.state
+        assert opened_state is not None
         filled = strategy.on_execution_reports(
             (
                 StrategyExecutionResponse(
@@ -694,15 +704,17 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(opened.state),
+            context.with_state(opened_state),
         )
 
         stopped = strategy.on_tick(
             TickFactory.tick_at(1, bid="149.90", ask="149.92"),
             context.with_state(filled),
         )
-        assert stopped.events[0].display_id == "L1R0B1"
+        assert stopped.events[0].display_id == "C1L1R0B1"
         assert stopped.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
+        stopped_state = stopped.state
+        assert stopped_state is not None
         stop_filled = strategy.on_execution_reports(
             (
                 StrategyExecutionResponse(
@@ -718,7 +730,7 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(stopped.state),
+            context.with_state(stopped_state),
         )
         pending_entry = stop_filled["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"][
             "filled_stop_loss_entry"
@@ -731,17 +743,20 @@ class TestSnowballStrategy:
             context.with_state(stop_filled),
         )
         assert not_rebuilt.events == ()
+        assert not_rebuilt.state is None
 
         rebuilt = strategy.on_tick(
             TickFactory.tick_at(3, bid="149.92", ask="149.95"),
-            context.with_state(not_rebuilt.state),
+            context.with_state(strategy.strategy_state()),
         )
-        assert rebuilt.events[0].display_id == "L1R0B2"
+        assert rebuilt.events[0].display_id == "C1L1R0B2"
         assert rebuilt.events[0].reason.rule_id == "snowball.open.rebuild"
         assert rebuilt.events[0].metadata["is_rebuild"] is True
         assert rebuilt.events[0].metadata["planned_entry_price"] == "149.92 JPY"
         assert rebuilt.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
-        requested_rebuild = rebuilt.state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
+        rebuilt_state = rebuilt.state
+        assert rebuilt_state is not None
+        requested_rebuild = rebuilt_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
             "0"
         ]["requested_entry"]
         assert rebuilt.events[0].price == Money.of("149.92", "JPY")
@@ -763,7 +778,7 @@ class TestSnowballStrategy:
                     ),
                 ),
             ),
-            context.with_state(rebuilt.state),
+            context.with_state(rebuilt_state),
         )
         rebuilt_entry = rebuild_filled["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
             "0"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import pairwise
 
@@ -107,39 +108,33 @@ class SnowballGridPolicy:
             return min(take_profit_price, bound)
         return max(take_profit_price, bound)
 
-    def _present_slots(self, cycle: Cycle) -> list[PresentSlot]:
-        present: list[PresentSlot] = []
-        for layer, slot in cycle.grid.all_present_slots():
+    def _present_slots(self, cycle: Cycle) -> Iterator[PresentSlot]:
+        for layer, slot in cycle.grid.iter_present_slots():
             entry_price = slot.reference_entry_price()
             take_profit_price = slot.reference_take_profit_price()
             if entry_price is None or take_profit_price is None:
                 continue
-            present.append(
-                (
-                    cycle.grid.layer_number(layer),
-                    layer.retracement_count(slot),
-                    entry_price,
-                    take_profit_price,
-                )
+            yield (
+                cycle.grid.layer_number(layer),
+                layer.retracement_count(slot),
+                entry_price,
+                take_profit_price,
             )
-        return present
 
     def _preceding_slots(
         self,
         cycle: Cycle,
         layer: Layer,
         retracement_count: int,
-    ) -> list[tuple[Layer, Slot]]:
-        preceding: list[tuple[Layer, Slot]] = []
+    ) -> Iterator[tuple[Layer, Slot]]:
         layer_number = cycle.grid.layer_number(layer)
-        for candidate_layer in cycle.grid.layers:
-            if cycle.grid.layer_number(candidate_layer) > layer_number:
+        for candidate_layer_number, candidate_layer in cycle.grid.iter_layer_items():
+            if candidate_layer_number > layer_number:
                 continue
-            for slot in candidate_layer.slots:
-                if candidate_layer is layer and layer.retracement_count(slot) >= retracement_count:
+            for slot_number, slot in candidate_layer.iter_slot_items():
+                if candidate_layer is layer and slot_number >= retracement_count:
                     continue
-                preceding.append((candidate_layer, slot))
-        return preceding
+                yield candidate_layer, slot
 
     def _combine(
         self,

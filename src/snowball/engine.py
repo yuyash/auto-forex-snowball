@@ -39,7 +39,11 @@ class SnowballEngine:
     ) -> SnowballStepResult:
         """Process a tick and return emitted Snowball events."""
         state.prune_completed_cycles()
-        account = self.services.accounting.evaluate(state=state, tick=tick, config=self.config)
+        account = (
+            self.services.accounting.evaluate(state=state, tick=tick, config=self.config)
+            if self.services.requires_accounting
+            else None
+        )
         context = SnowballTickContext(
             tick=tick,
             state=state,

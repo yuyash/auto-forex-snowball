@@ -43,12 +43,15 @@ class SnowballCycleService:
         """Open missing managed directions after completed cycles were removed."""
         events: list[SnowballEvent] = []
         for direction in self._managed_directions():
-            has_active = any(
-                cycle.direction == direction and cycle.active for cycle in state.cycles
-            )
-            has_pending = any(
-                cycle.direction == direction and cycle.pending for cycle in state.cycles
-            )
+            has_active = False
+            has_pending = False
+            for cycle in state.iter_cycles():
+                if cycle.direction != direction:
+                    continue
+                has_active = has_active or cycle.active
+                has_pending = has_pending or cycle.pending
+                if has_active and has_pending:
+                    break
             if has_active:
                 continue
             if has_pending and not self.config.cycle.reseed_when_all_positions_pending_rebuild:

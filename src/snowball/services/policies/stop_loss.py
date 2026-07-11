@@ -146,10 +146,7 @@ class SnowballStopLossPlanner:
         pip_size: Decimal,
     ) -> Money:
         """Return the planned price for rebuilding a stopped slot."""
-        if (
-            self.config.rebuild.price.entry_price_mode
-            == RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE
-        ):
+        if self.config.rebuild.price.entry_price_mode == RebuildEntryPriceMode.STOP_LOSS_EXIT_PRICE:
             base_price = planned_stop_loss_price or stop_loss_exit_price
             buffer_pips = self.config.rebuild.price.buffer_pips
         else:

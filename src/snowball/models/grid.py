@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -500,9 +500,7 @@ class Slot:
             EntryIdType.FILLED_STOP_LOSS_ENTRY,
             expected_entry_id=expected_entry_id,
         )
-        if entry.entry_id != entry.requested.entry_id.with_type(
-            EntryIdType.FILLED_STOP_LOSS_ENTRY
-        ):
+        if entry.entry_id != entry.requested.entry_id.with_type(EntryIdType.FILLED_STOP_LOSS_ENTRY):
             raise ValueError("filled stop-loss id does not match stop-loss request id")
         cls._require_aware_datetime(entry.filled_at, "filled_at")
         if entry.filled_at < entry.requested.planned_at:
@@ -612,17 +610,29 @@ class Layer:
         repr=False,
         compare=False,
     )
+    _slot_numbers_by_id: dict[int, int] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         self.base_units = Units.of(self.base_units)
         if self.base_units <= 0:
             raise ValueError("layer base units must be positive")
         self._validate_slot_numbers()
+        self._slots = dict(sorted(self._slots.items()))
+        self._slot_numbers_by_id = {
+            id(slot): slot_number for slot_number, slot in self._slots.items()
+        }
+        self._build_number_generators = dict(sorted(self._build_number_generators.items()))
         missing_slot_numbers = set(self._slots) - set(self._build_number_generators)
         for slot_number in missing_slot_numbers:
             self._build_number_generators[slot_number] = IntegerIdGenerator(
                 self._entry_build_number(self._slots[slot_number]) + 1
             )
+        self._build_number_generators = dict(sorted(self._build_number_generators.items()))
         unknown_slot_numbers = set(self._build_number_generators) - set(self._slots)
         if unknown_slot_numbers:
             raise ValueError("build number generator references unknown slot")
@@ -682,12 +692,28 @@ class Layer:
     @property
     def slots(self) -> tuple[Slot, ...]:
         """Return the layer's slots in ascending R order (read-only view)."""
-        return tuple(self._slots[slot_number] for slot_number in sorted(self._slots))
+        return tuple(self._slots.values())
+
+    def iter_slots(self) -> Iterator[Slot]:
+        """Iterate slots in ascending R order without allocating a tuple."""
+        return iter(self._slots.values())
+
+    def reversed_slots(self) -> Iterator[Slot]:
+        """Iterate slots in descending R order without allocating a tuple."""
+        return reversed(self._slots.values())
+
+    def iter_slot_items(self) -> Iterator[tuple[int, Slot]]:
+        """Iterate slot numbers and slots in ascending R order."""
+        return iter(self._slots.items())
+
+    def reversed_slot_items(self) -> Iterator[tuple[int, Slot]]:
+        """Iterate slot numbers and slots in descending R order."""
+        return reversed(self._slots.items())
 
     @property
     def slot_numbers(self) -> tuple[int, ...]:
         """Return slot numbers in ascending R order."""
-        return tuple(sorted(self._slots))
+        return tuple(self._slots)
 
     def slot(self, slot_number: int) -> Slot:
         """Return one retracement slot."""
@@ -695,10 +721,10 @@ class Layer:
 
     def slot_number(self, slot: Slot) -> int:
         """Return the slot number derived from this layer's slot map."""
-        for slot_number, candidate in self._slots.items():
-            if candidate is slot:
-                return slot_number
-        raise ValueError("slot does not belong to this layer")
+        try:
+            return self._slot_numbers_by_id[id(slot)]
+        except KeyError as exc:
+            raise ValueError("slot does not belong to this layer") from exc
 
     def retracement_count(self, slot: Slot) -> int:
         """Return the R number derived from a slot's position in this layer."""
@@ -713,7 +739,7 @@ class Layer:
         """Return latest build numbers keyed by slot number."""
         return {
             slot_number: self._build_number_generators[slot_number].next_value - 1
-            for slot_number in sorted(self._slots)
+            for slot_number in self._slots
         }
 
     def next_build_number(self, slot: Slot) -> int:
@@ -760,16 +786,28 @@ class Layer:
     def live_entries(self) -> list[FilledEntry]:
         """Return broker-live entries in ascending R order."""
         entries: list[FilledEntry] = []
-        for slot in self.slots:
+        for slot in self.iter_slots():
             entry = slot.live_or_pending_close_entry()
             if entry is not None:
                 entries.append(entry)
         return entries
 
+    def has_live_entries(self) -> bool:
+        """Return True when any slot has a broker-live entry."""
+        return any(slot.live_or_pending_close_entry() is not None for slot in self.iter_slots())
+
+    def live_entry_count(self) -> int:
+        """Return the number of broker-live entries."""
+        return sum(
+            1 for slot in self.iter_slots() if slot.live_or_pending_close_entry() is not None
+        )
+
     def counter_entries(self) -> list[FilledEntry]:
         """Return broker-live R1+ entries in ascending R order."""
         entries: list[FilledEntry] = []
-        for slot_number in sorted(slot_number for slot_number in self._slots if slot_number > 0):
+        for slot_number in self._slots:
+            if slot_number <= 0:
+                continue
             slot = self._slots[slot_number]
             entry = slot.live_or_pending_close_entry()
             if entry is not None:
@@ -778,25 +816,32 @@ class Layer:
 
     def present_slots(self) -> list[Slot]:
         """Return slots with any live, closed, or sealed entry."""
-        return [slot for slot in self.slots if slot.is_present]
+        return [slot for slot in self.iter_slots() if slot.is_present]
 
     def highest_present_slot(self) -> Slot | None:
         """Return the highest-R slot with any entry."""
-        for slot in reversed(self.slots):
+        for slot in self.reversed_slots():
             if slot.is_present:
                 return slot
         return None
 
+    def highest_present_slot_number(self) -> int | None:
+        """Return the highest R number with any entry."""
+        for slot_number, slot in self.reversed_slot_items():
+            if slot.is_present:
+                return slot_number
+        return None
+
     def highest_live_slot(self) -> Slot | None:
         """Return the highest-R slot with a directly closeable live entry."""
-        for slot in reversed(self.slots):
+        for slot in self.reversed_slots():
             if slot.filled_entry is not None:
                 return slot
         return None
 
     def is_empty(self) -> bool:
         """Return True when the layer has no slot entries."""
-        return not any(slot.is_present for slot in self.slots)
+        return not any(slot.is_present for slot in self.iter_slots())
 
 
 @dataclass(slots=True)
@@ -809,9 +854,19 @@ class Grid:
     """
 
     _layers: dict[int, Layer]
+    _layer_numbers_by_id: dict[int, int] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         self._validate_layer_numbers()
+        self._layers = dict(sorted(self._layers.items()))
+        self._layer_numbers_by_id = {
+            id(layer): layer_number for layer_number, layer in self._layers.items()
+        }
 
     @classmethod
     def create(cls, *, base_units: Units, max_retracements: int) -> Grid:
@@ -833,12 +888,34 @@ class Grid:
     @property
     def layers(self) -> tuple[Layer, ...]:
         """Return the grid's layers from L1 upward (read-only view)."""
-        return tuple(self._layers[layer_number] for layer_number in sorted(self._layers))
+        return tuple(self._layers.values())
+
+    def iter_layers(self) -> Iterator[Layer]:
+        """Iterate layers from L1 upward without allocating a tuple."""
+        return iter(self._layers.values())
+
+    def reversed_layers(self) -> Iterator[Layer]:
+        """Iterate layers from highest L down to L1 without allocating a tuple."""
+        return reversed(self._layers.values())
+
+    def iter_layer_items(self) -> Iterator[tuple[int, Layer]]:
+        """Iterate layer numbers and layers from L1 upward."""
+        return iter(self._layers.items())
+
+    @property
+    def layer_count(self) -> int:
+        """Return the number of layers."""
+        return len(self._layers)
+
+    @property
+    def first_layer(self) -> Layer:
+        """Return L1."""
+        return self._layers[1]
 
     @property
     def current_layer(self) -> Layer:
         """Return the highest-numbered layer."""
-        return self._layers[max(self._layers)]
+        return next(reversed(self._layers.values()))
 
     def add_layer(self, *, base_units: Units, max_retracements: int) -> Layer:
         """Append and return a new layer."""
@@ -848,15 +925,16 @@ class Grid:
             max_retracements=max_retracements,
         )
         self._layers[layer_number] = layer
+        self._layer_numbers_by_id[id(layer)] = layer_number
         self._validate_layer_numbers()
         return layer
 
     def layer_number(self, layer: Layer) -> int:
         """Return the L number derived from a layer's position in this grid."""
-        for index, candidate in self._layers.items():
-            if candidate is layer:
-                return index
-        raise ValueError("layer does not belong to this grid")
+        try:
+            return self._layer_numbers_by_id[id(layer)]
+        except KeyError as exc:
+            raise ValueError("layer does not belong to this grid") from exc
 
     def role_for(self, layer: Layer, slot: Slot) -> EntryRole:
         """Return the entry role derived from layer and slot positions."""
@@ -868,95 +946,122 @@ class Grid:
     def all_live_entries(self) -> list[FilledEntry]:
         """Return all live entries in grid order."""
         entries: list[FilledEntry] = []
-        for layer in self.layers:
+        for layer in self.iter_layers():
             entries.extend(layer.live_entries())
         return entries
+
+    def has_live_entries(self) -> bool:
+        """Return True when any layer has broker-live entries."""
+        return any(layer.has_live_entries() for layer in self.iter_layers())
 
     def all_counter_entries(self) -> list[FilledEntry]:
         """Return live counter entries in grid order."""
         entries: list[FilledEntry] = []
-        for layer in self.layers:
+        for layer in self.iter_layers():
             entries.extend(layer.counter_entries())
         return entries
 
     def all_present_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots with any entry in grid order."""
-        present: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
-            present.extend((layer, slot) for slot in layer.slots if slot.is_present)
-        return present
+        return list(self.iter_present_slots())
+
+    def iter_present_slots(self) -> Iterator[tuple[Layer, Slot]]:
+        """Iterate slots with any entry in grid order."""
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                if slot.is_present:
+                    yield layer, slot
 
     def filled_stop_loss_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots holding filled stop-loss entries waiting for rebuild."""
-        slots: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
-            slots.extend(
-                (layer, slot) for slot in layer.slots if slot.filled_stop_loss_entry is not None
-            )
-        return slots
+        return list(self.iter_filled_stop_loss_slots())
+
+    def iter_filled_stop_loss_slots(self) -> Iterator[tuple[Layer, Slot]]:
+        """Iterate slots holding filled stop-loss entries waiting for rebuild."""
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                if slot.filled_stop_loss_entry is not None:
+                    yield layer, slot
 
     def requested_stop_loss_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots with stop-loss closes waiting for fill confirmation."""
-        requested: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
-            requested.extend(
-                (layer, slot) for slot in layer.slots if slot.requested_stop_loss_entry is not None
-            )
-        return requested
+        return list(self.iter_requested_stop_loss_slots())
+
+    def iter_requested_stop_loss_slots(self) -> Iterator[tuple[Layer, Slot]]:
+        """Iterate slots with stop-loss closes waiting for fill confirmation."""
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                if slot.requested_stop_loss_entry is not None:
+                    yield layer, slot
 
     def requested_close_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots with non-stop-loss closes waiting for fill confirmation."""
-        requested: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
-            requested.extend(
-                (layer, slot) for slot in layer.slots if slot.requested_close_entry is not None
-            )
-        return requested
+        return list(self.iter_requested_close_slots())
+
+    def iter_requested_close_slots(self) -> Iterator[tuple[Layer, Slot]]:
+        """Iterate slots with non-stop-loss closes waiting for fill confirmation."""
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                if slot.requested_close_entry is not None:
+                    yield layer, slot
 
     def requested_entry_slots(self) -> list[tuple[Layer, Slot]]:
         """Return slots with entries waiting for fill confirmation."""
-        requested: list[tuple[Layer, Slot]] = []
-        for layer in self.layers:
-            requested.extend((layer, slot) for slot in layer.slots if slot.requested_entry)
-        return requested
+        return list(self.iter_requested_entry_slots())
+
+    def iter_requested_entry_slots(self) -> Iterator[tuple[Layer, Slot]]:
+        """Iterate slots with entries waiting for fill confirmation."""
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                if slot.requested_entry is not None:
+                    yield layer, slot
 
     def head_entry(self) -> FilledEntry | None:
         """Return the lowest L/R live entry."""
-        entries = self.all_live_entries()
-        return entries[0] if entries else None
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
+                entry = slot.live_or_pending_close_entry()
+                if entry is not None:
+                    return entry
+        return None
 
     def tail_present_slot(self) -> tuple[Layer, Slot] | None:
         """Return the highest L/R slot with any entry."""
-        present = self.all_present_slots()
-        return present[-1] if present else None
+        for layer in self.reversed_layers():
+            for slot in layer.reversed_slots():
+                if slot.is_present:
+                    return layer, slot
+        return None
 
     def has_filled_stop_loss_entries(self) -> bool:
         """Return True when any slot holds a filled stop-loss entry."""
-        return bool(self.filled_stop_loss_slots())
+        return next(self.iter_filled_stop_loss_slots(), None) is not None
 
     def has_requested_stop_losses(self) -> bool:
         """Return True when any stop-loss close is waiting for fill confirmation."""
-        return bool(self.requested_stop_loss_slots())
+        return next(self.iter_requested_stop_loss_slots(), None) is not None
 
     def has_requested_closes(self) -> bool:
         """Return True when any non-stop-loss close is waiting for fill confirmation."""
-        return bool(self.requested_close_slots())
+        return next(self.iter_requested_close_slots(), None) is not None
 
     def has_requested_entries(self) -> bool:
         """Return True when any entry is waiting for fill confirmation."""
-        return bool(self.requested_entry_slots())
+        return next(self.iter_requested_entry_slots(), None) is not None
 
     def is_empty(self) -> bool:
         """Return True when there are no live entries."""
-        return not self.all_live_entries()
+        return not self.has_live_entries()
 
     def remove_empty_top_layers(self) -> None:
         """Remove empty non-L1 layers from the top of the grid."""
         while len(self._layers) > 1:
             top_layer_number = max(self._layers)
-            if not self._layers[top_layer_number].is_empty():
+            top_layer = self._layers[top_layer_number]
+            if not top_layer.is_empty():
                 return
             del self._layers[top_layer_number]
+            del self._layer_numbers_by_id[id(top_layer)]
         self._validate_layer_numbers()
 
     def next_entry_id(self, *, cycle_id: CycleId, layer: Layer, slot: Slot) -> EntryId:
@@ -970,8 +1075,8 @@ class Grid:
 
     def find_entry_slot(self, entry: FilledEntry) -> tuple[Layer, Slot] | None:
         """Find the layer and slot containing an entry."""
-        for layer in self.layers:
-            for slot in layer.slots:
+        for layer in self.iter_layers():
+            for slot in layer.iter_slots():
                 if slot.live_or_pending_close_entry() is entry:
                     return layer, slot
         return None

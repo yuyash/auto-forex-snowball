@@ -62,6 +62,14 @@ class EntryId:
         )
 
     @property
+    def display_id(self) -> str:
+        """Return the compact identifier shown in strategy events."""
+        return (
+            f"C{self.cycle_id}L{self.layer_number}"
+            f"R{self.slot_number}B{self.build_number}"
+        )
+
+    @property
     def retracement_count(self) -> int:
         """Return the Snowball retracement count represented by the slot number."""
         return self.slot_number

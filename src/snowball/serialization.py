@@ -31,7 +31,7 @@ class SnowballStateSerializer:
     def to_mapping(cls, state: SnowballState) -> dict[str, Any]:
         """Serialize Snowball state to a plain mapping."""
         return {
-            "cycles": [cls._cycle_to_mapping(cycle) for cycle in state.cycles],
+            "cycles": [cls._cycle_to_mapping(cycle) for cycle in state.iter_cycles()],
             "next_cycle_id": state.next_cycle_id_value,
         }
 
@@ -77,7 +77,8 @@ class SnowballStateSerializer:
     def _grid_to_mapping(cls, grid: Grid) -> dict[str, Any]:
         return {
             "layers": {
-                str(grid.layer_number(layer)): cls._layer_to_mapping(layer) for layer in grid.layers
+                str(layer_number): cls._layer_to_mapping(layer)
+                for layer_number, layer in grid.iter_layer_items()
             }
         }
 
@@ -102,7 +103,8 @@ class SnowballStateSerializer:
                 for slot_number, build_number in layer.build_numbers().items()
             },
             "slots": {
-                str(layer.slot_number(slot)): cls._slot_to_mapping(slot) for slot in layer.slots
+                str(slot_number): cls._slot_to_mapping(slot)
+                for slot_number, slot in layer.iter_slot_items()
             },
         }
 

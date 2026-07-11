@@ -25,7 +25,7 @@ class SnowballTickContext:
 
     tick: Tick
     state: SnowballState
-    account: AccountSnapshot
+    account: AccountSnapshot | None
     events: list[SnowballEvent] = field(default_factory=list)
     halted: bool = False
 
@@ -51,6 +51,8 @@ class EmergencyStage:
     protection_service: SnowballProtectionService
 
     def process(self, context: SnowballTickContext) -> None:
+        if context.account is None:
+            return
         emergency = self.protection_service.handle_emergency(
             margin_ratio=context.account.margin_ratio,
         )
@@ -67,6 +69,8 @@ class ShrinkStage:
     protection_service: SnowballProtectionService
 
     def process(self, context: SnowballTickContext) -> None:
+        if context.account is None:
+            return
         shrink_events = self.protection_service.handle_shrink(
             state=context.state,
             tick=context.tick,
@@ -87,7 +91,7 @@ class InitialCycleStage:
     cycle_service: SnowballCycleService
 
     def process(self, context: SnowballTickContext) -> None:
-        if context.state.cycles:
+        if context.state.has_cycles():
             return
         context.events.extend(
             self.cycle_service.open_initial_cycles(
@@ -104,7 +108,7 @@ class ProcessCyclesStage:
     cycle_processor: SnowballCycleProcessor
 
     def process(self, context: SnowballTickContext) -> None:
-        for cycle in list(context.state.cycles):
+        for cycle in context.state.iter_cycles():
             if cycle.completed:
                 continue
             context.events.extend(
@@ -135,7 +139,6 @@ class FinalizeTickStage:
     """Normalize state at the end of ordinary tick processing."""
 
     def process(self, context: SnowballTickContext) -> None:
-        context.state.refresh_cycle_statuses()
         context.state.prune_completed_cycles()
 
 
@@ -214,5 +217,4 @@ class SnowballCycleProcessor:
         events: list[SnowballEvent] = []
         for stage in self.stages:
             events.extend(stage.process(cycle=cycle, tick=tick))
-        cycle.refresh_status()
         return events
