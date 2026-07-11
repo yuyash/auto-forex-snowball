@@ -9,19 +9,8 @@ from typing import Any, Self
 
 from core import Currency, MarginRate, Money, Percent, Pips, StrategyParameters, Units
 
-from snowball.config_parsing import (
-    bool_value,
-    decimal_value,
-    enum_value,
-    int_value,
-    nested,
-    require_manual_length,
-    require_positive,
-)
-from snowball.config_parsing import (
-    changes as parse_changes,
-)
-from snowball.config_serialization import serialize_config
+from snowball.config_parsing import SnowballConfigParser
+from snowball.config_serialization import SnowballConfigSerializer
 from snowball.enums import (
     CounterTakeProfitMode,
     IntervalMode,
@@ -54,28 +43,30 @@ class PipProgressionConfig:
         config = default or cls()
         if not values:
             return config
-        changes = parse_changes(
+        changes = SnowballConfigParser.changes(
             values,
-            mode=lambda value: enum_value(IntervalMode, value),
+            mode=lambda value: SnowballConfigParser.enum_value(IntervalMode, value),
             head_pips=Pips.of,
             tail_pips=Pips.of,
-            flat_steps=int_value,
-            gamma=decimal_value,
+            flat_steps=SnowballConfigParser.int_value,
+            gamma=SnowballConfigParser.decimal_value,
             manual_pips=Pips.tuple_of,
         )
         return replace(config, **changes)
 
     def validate(self, *, manual_minimum: int | None = None, name: str) -> None:
         """Validate this progression."""
-        require_positive(self.head_pips, f"{name}.head_pips")
-        require_positive(self.tail_pips, f"{name}.tail_pips")
-        require_positive(self.gamma, f"{name}.gamma")
+        SnowballConfigParser.require_positive(self.head_pips, f"{name}.head_pips")
+        SnowballConfigParser.require_positive(self.tail_pips, f"{name}.tail_pips")
+        SnowballConfigParser.require_positive(self.gamma, f"{name}.gamma")
         if self.flat_steps < 0:
             raise ValueError(f"{name}.flat_steps must not be negative")
         if self.mode == IntervalMode.MANUAL:
             if manual_minimum is None:
                 raise ValueError(f"{name}.manual_pips minimum length is not configured")
-            require_manual_length(self.manual_pips, manual_minimum, f"{name}.manual_pips")
+            SnowballConfigParser.require_manual_length(
+                self.manual_pips, manual_minimum, f"{name}.manual_pips"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,22 +85,22 @@ class PositionSizingConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
                 base_units=Units.of,
-                initial_entry_units_multiplier=decimal_value,
-                additional_layer_base_units_multiplier=decimal_value,
+                initial_entry_units_multiplier=SnowballConfigParser.decimal_value,
+                additional_layer_base_units_multiplier=SnowballConfigParser.decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate sizing values."""
-        require_positive(self.base_units, "sizing.base_units")
-        require_positive(
+        SnowballConfigParser.require_positive(self.base_units, "sizing.base_units")
+        SnowballConfigParser.require_positive(
             self.initial_entry_units_multiplier,
             "sizing.initial_entry_units_multiplier",
         )
-        require_positive(
+        SnowballConfigParser.require_positive(
             self.additional_layer_base_units_multiplier,
             "sizing.additional_layer_base_units_multiplier",
         )
@@ -141,10 +132,10 @@ class SlotRefillConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                enabled=bool_value,
-                max_reusable_retracement=int_value,
+                enabled=SnowballConfigParser.bool_value,
+                max_reusable_retracement=SnowballConfigParser.int_value,
             ),
         )
 
@@ -165,10 +156,10 @@ class GridConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                max_retracements_per_layer=int_value,
-                max_layers=int_value,
+                max_retracements_per_layer=SnowballConfigParser.int_value,
+                max_layers=SnowballConfigParser.int_value,
                 refill=SlotRefillConfig.from_mapping,
             ),
         )
@@ -210,7 +201,7 @@ class ForwardConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
                 take_profit_pips=Pips.of,
             ),
@@ -218,7 +209,7 @@ class ForwardConfig:
 
     def validate(self) -> None:
         """Validate forward-direction values."""
-        require_positive(self.take_profit_pips, "forward.take_profit_pips")
+        SnowballConfigParser.require_positive(self.take_profit_pips, "forward.take_profit_pips")
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,10 +227,10 @@ class CycleConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                hedging_enabled=bool_value,
-                reseed_when_all_positions_pending_rebuild=bool_value,
+                hedging_enabled=SnowballConfigParser.bool_value,
+                reseed_when_all_positions_pending_rebuild=SnowballConfigParser.bool_value,
             ),
         )
 
@@ -264,20 +255,20 @@ class CounterTakeProfitConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                mode=lambda value: enum_value(CounterTakeProfitMode, value),
+                mode=lambda value: SnowballConfigParser.enum_value(CounterTakeProfitMode, value),
                 fixed_pips=Pips.of,
                 step_pips=Pips.of,
-                multiplier=decimal_value,
+                multiplier=SnowballConfigParser.decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate counter take-profit values."""
-        require_positive(self.fixed_pips, "counter.take_profit.fixed_pips")
-        require_positive(self.step_pips, "counter.take_profit.step_pips")
-        require_positive(self.multiplier, "counter.take_profit.multiplier")
+        SnowballConfigParser.require_positive(self.fixed_pips, "counter.take_profit.fixed_pips")
+        SnowballConfigParser.require_positive(self.step_pips, "counter.take_profit.step_pips")
+        SnowballConfigParser.require_positive(self.multiplier, "counter.take_profit.multiplier")
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,7 +286,7 @@ class CounterConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
                 interval=PipProgressionConfig.from_mapping,
                 take_profit=CounterTakeProfitConfig.from_mapping,
@@ -326,10 +317,10 @@ class StopLossProtectionConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                enabled=bool_value,
-                from_retracement=int_value,
+                enabled=SnowballConfigParser.bool_value,
+                from_retracement=SnowballConfigParser.int_value,
             ),
         )
 
@@ -354,10 +345,10 @@ class StopLossConfig:
         config = cls()
         if not values:
             return config
-        changes = parse_changes(
+        changes = SnowballConfigParser.changes(
             values,
-            enabled=bool_value,
-            mode=lambda value: enum_value(StopLossMode, value),
+            enabled=SnowballConfigParser.bool_value,
+            mode=lambda value: SnowballConfigParser.enum_value(StopLossMode, value),
             distance=lambda value: PipProgressionConfig.from_mapping(
                 value,
                 default=config.distance,
@@ -394,9 +385,11 @@ class RebuildPriceConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                entry_price_mode=lambda value: enum_value(RebuildEntryPriceMode, value),
+                entry_price_mode=lambda value: SnowballConfigParser.enum_value(
+                    RebuildEntryPriceMode, value
+                ),
                 buffer_pips=Pips.of,
             ),
         )
@@ -417,9 +410,9 @@ class RebuildStopLossConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                mode=lambda value: enum_value(RebuildStopLossMode, value),
+                mode=lambda value: SnowballConfigParser.enum_value(RebuildStopLossMode, value),
                 manual_distances_pips=Pips.tuple_of,
             ),
         )
@@ -427,7 +420,7 @@ class RebuildStopLossConfig:
     def validate(self, *, max_retracements_per_layer: int) -> None:
         """Validate rebuild stop-loss config."""
         if self.mode == RebuildStopLossMode.MANUAL_DISTANCE:
-            require_manual_length(
+            SnowballConfigParser.require_manual_length(
                 self.manual_distances_pips,
                 max_retracements_per_layer + 1,
                 "rebuild.stop_loss.manual_distances_pips",
@@ -454,9 +447,9 @@ class RebuildTakeProfitConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                mode=lambda value: enum_value(RebuildTakeProfitMode, value),
+                mode=lambda value: SnowballConfigParser.enum_value(RebuildTakeProfitMode, value),
                 distance=lambda value: PipProgressionConfig.from_mapping(
                     value,
                     default=config.distance,
@@ -490,9 +483,9 @@ class RebuildConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                enabled=bool_value,
+                enabled=SnowballConfigParser.bool_value,
                 price=RebuildPriceConfig.from_mapping,
                 stop_loss=RebuildStopLossConfig.from_mapping,
                 take_profit=RebuildTakeProfitConfig.from_mapping,
@@ -525,12 +518,12 @@ class ProtectionConfig:
             return config
         return replace(
             config,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
-                shrink_enabled=bool_value,
+                shrink_enabled=SnowballConfigParser.bool_value,
                 shrink_start_margin_percent=Percent.of,
                 shrink_target_margin_percent=Percent.of,
-                emergency_enabled=bool_value,
+                emergency_enabled=SnowballConfigParser.bool_value,
                 emergency_margin_percent=Percent.of,
             ),
         )
@@ -576,18 +569,20 @@ class AccountValuationConfig:
             config,
             currency=currency,
             balance=balance,
-            **parse_changes(
+            **SnowballConfigParser.changes(
                 values,
                 margin_rate=MarginRate.of,
-                quote_to_account_rate=decimal_value,
+                quote_to_account_rate=SnowballConfigParser.decimal_value,
             ),
         )
 
     def validate(self) -> None:
         """Validate account valuation inputs."""
         self.balance.require_currency(self.currency).require_positive()
-        require_positive(self.margin_rate, "account.margin_rate")
-        require_positive(self.quote_to_account_rate, "account.quote_to_account_rate")
+        SnowballConfigParser.require_positive(self.margin_rate, "account.margin_rate")
+        SnowballConfigParser.require_positive(
+            self.quote_to_account_rate, "account.quote_to_account_rate"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,15 +609,19 @@ class SnowballConfig:
             return cls().validate()
         values = parameters.to_dict()
         config = cls(
-            sizing=PositionSizingConfig.from_mapping(nested(values, "sizing")),
-            grid=GridConfig.from_mapping(nested(values, "grid")),
-            cycle=CycleConfig.from_mapping(nested(values, "cycle")),
-            forward=ForwardConfig.from_mapping(nested(values, "forward")),
-            counter=CounterConfig.from_mapping(nested(values, "counter")),
-            stop_loss=StopLossConfig.from_mapping(nested(values, "stop_loss")),
-            rebuild=RebuildConfig.from_mapping(nested(values, "rebuild")),
-            protection=ProtectionConfig.from_mapping(nested(values, "protection")),
-            account=AccountValuationConfig.from_mapping(nested(values, "account")),
+            sizing=PositionSizingConfig.from_mapping(SnowballConfigParser.nested(values, "sizing")),
+            grid=GridConfig.from_mapping(SnowballConfigParser.nested(values, "grid")),
+            cycle=CycleConfig.from_mapping(SnowballConfigParser.nested(values, "cycle")),
+            forward=ForwardConfig.from_mapping(SnowballConfigParser.nested(values, "forward")),
+            counter=CounterConfig.from_mapping(SnowballConfigParser.nested(values, "counter")),
+            stop_loss=StopLossConfig.from_mapping(SnowballConfigParser.nested(values, "stop_loss")),
+            rebuild=RebuildConfig.from_mapping(SnowballConfigParser.nested(values, "rebuild")),
+            protection=ProtectionConfig.from_mapping(
+                SnowballConfigParser.nested(values, "protection")
+            ),
+            account=AccountValuationConfig.from_mapping(
+                SnowballConfigParser.nested(values, "account")
+            ),
         )
         return config.validate()
 
@@ -648,4 +647,4 @@ class SnowballConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Return nested normalized values suitable for StrategyParameters."""
-        return serialize_config(self)
+        return SnowballConfigSerializer.serialize(self)

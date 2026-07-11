@@ -64,10 +64,7 @@ class EntryId:
     @property
     def display_id(self) -> str:
         """Return the compact identifier shown in strategy events."""
-        return (
-            f"C{self.cycle_id}L{self.layer_number}"
-            f"R{self.slot_number}B{self.build_number}"
-        )
+        return f"C{self.cycle_id}L{self.layer_number}R{self.slot_number}B{self.build_number}"
 
     @property
     def retracement_count(self) -> int:
