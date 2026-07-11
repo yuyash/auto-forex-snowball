@@ -7,8 +7,6 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from core import Currency, Money
-
 
 def nested(values: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """Return a nested config mapping."""
@@ -32,11 +30,6 @@ def decimal_value(value: Any) -> Decimal:
     return Decimal(str(value))
 
 
-def money_value(value: Any, currency: Currency) -> Money:
-    """Parse a positive money config value."""
-    return Money.coerce(value, currency).require_positive()
-
-
 def int_value(value: Any) -> int:
     """Parse an integer config value."""
     return int(value)
@@ -49,15 +42,6 @@ def bool_value(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
-
-
-def decimal_tuple(value: Any) -> tuple[Decimal, ...]:
-    """Parse a tuple of decimal config values."""
-    if value is None:
-        return ()
-    if not isinstance(value, list | tuple):
-        raise ValueError("manual pip values must be a sequence")
-    return tuple(decimal_value(item) for item in value)
 
 
 def enum_value[EnumT: StrEnum](enum_type: type[EnumT], value: Any) -> EnumT:

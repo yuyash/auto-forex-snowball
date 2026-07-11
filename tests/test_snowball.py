@@ -26,6 +26,7 @@ from pydantic import AwareDatetime
 from snowball import SnowballStrategy, __version__
 from snowball.config import (
     CycleConfig,
+    ForwardConfig,
     GridConfig,
     PipProgressionConfig,
     ProtectionConfig,
@@ -467,10 +468,7 @@ class TestSnowballEngine:
         assert (
             restored_pending_entry.original_entry is restored_pending_entry.requested.original_entry
         )
-        assert (
-            restored_pending_entry.planned_rebuild_price
-            == pending_entry.planned_rebuild_price
-        )
+        assert restored_pending_entry.planned_rebuild_price == pending_entry.planned_rebuild_price
 
         rebuilt = engine.process_tick(
             tick=TickFactory.tick_at(2, bid="150.01", ask="150.03"),
@@ -504,11 +502,13 @@ class TestSnowballStrategy:
         strategy = SnowballStrategy(
             parameters=StrategyParameters.of(
                 cycle={"hedging_enabled": False},
+                forward={"take_profit_pips": "20"},
                 grid={"max_retracements_per_layer": 3},
             )
         )
 
         assert strategy.config.cycle.hedging_enabled is False
+        assert strategy.config.forward == ForwardConfig(take_profit_pips=Pips("20"))
         assert strategy.config.grid == GridConfig(max_retracements_per_layer=3)
 
     def test_strategy_maps_engine_events_to_core_strategy_events(self) -> None:
@@ -637,9 +637,9 @@ class TestSnowballStrategy:
             context.with_state(result.state),
         )
 
-        filled_entry = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
-            "0"
-        ]["filled_entry"]
+        filled_entry = filled_state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"][
+            "filled_entry"
+        ]
         assert filled_entry["planned_entry_price"]["amount"] == "150.02"
         assert filled_entry["planned_take_profit_price"]["amount"] == "150.52"
         assert filled_entry["planned_stop_loss_price"]["amount"] == "149.72"
@@ -720,9 +720,9 @@ class TestSnowballStrategy:
             ),
             context.with_state(stopped.state),
         )
-        pending_entry = stop_filled["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
-            "0"
-        ]["filled_stop_loss_entry"]
+        pending_entry = stop_filled["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"]["0"][
+            "filled_stop_loss_entry"
+        ]
         assert pending_entry["filled_stop_loss_price"]["amount"] == "149.88"
         assert pending_entry["planned_rebuild_price"]["amount"] == "149.92"
 
@@ -741,9 +741,9 @@ class TestSnowballStrategy:
         assert rebuilt.events[0].metadata["is_rebuild"] is True
         assert rebuilt.events[0].metadata["planned_entry_price"] == "149.92 JPY"
         assert rebuilt.events[0].metadata["planned_rebuild_price"] == "149.92 JPY"
-        requested_rebuild = rebuilt.state["snowball"]["cycles"][0]["grid"]["layers"]["1"][
-            "slots"
-        ]["0"]["requested_entry"]
+        requested_rebuild = rebuilt.state["snowball"]["cycles"][0]["grid"]["layers"]["1"]["slots"][
+            "0"
+        ]["requested_entry"]
         assert rebuilt.events[0].price == Money.of("149.92", "JPY")
         assert requested_rebuild["planned_entry_price"]["amount"] == "149.92"
         assert requested_rebuild["planned_take_profit_price"]["amount"] == "150.42"

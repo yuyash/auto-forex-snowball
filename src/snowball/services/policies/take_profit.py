@@ -23,18 +23,18 @@ class SnowballTakeProfitPlanner:
     calculator: SnowballCalculator
     pricing: SnowballMarketPricing
 
-    def cycle_take_profit_price(
+    def forward_take_profit_price(
         self,
         *,
         direction: PositionSide,
         entry_price: Money,
         pip_size: Decimal,
     ) -> Money:
-        """Return the cycle-head take-profit price."""
+        """Return the forward-direction take-profit price."""
         return self.pricing.take_profit_price(
             direction=direction,
             entry_price=entry_price,
-            tp_pips=self.config.cycle.take_profit_pips,
+            tp_pips=self.config.forward.take_profit_pips,
             pip_size=pip_size,
         )
 
@@ -74,7 +74,7 @@ class SnowballTakeProfitPlanner:
         pip_size: Decimal,
     ) -> Money:
         """Return L2+ R0 TP price clamped by the previous layer's highest TP."""
-        planned_take_profit_price = self.cycle_take_profit_price(
+        planned_take_profit_price = self.forward_take_profit_price(
             direction=direction,
             entry_price=new_price,
             pip_size=pip_size,

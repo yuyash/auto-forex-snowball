@@ -46,7 +46,7 @@ class SnowballEntryService:
             layer=layer,
             retracement_count=layer.retracement_count(slot),
             entry_price=entry_price,
-            take_profit_price=self.take_profit_planner.cycle_take_profit_price(
+            take_profit_price=self.take_profit_planner.forward_take_profit_price(
                 direction=direction,
                 entry_price=entry_price,
                 pip_size=pip_size,
@@ -112,9 +112,7 @@ class SnowballEntryService:
         """Create an L2+ R0 entry whose TP is bounded by the previous layer."""
         pip_size = tick.instrument.pip_size
         planned_entry_price = (
-            self.pricing.entry_side_price(direction, tick)
-            if entry_price is None
-            else entry_price
+            self.pricing.entry_side_price(direction, tick) if entry_price is None else entry_price
         )
         retracement_count = layer.retracement_count(slot)
         return self._requested_entry(

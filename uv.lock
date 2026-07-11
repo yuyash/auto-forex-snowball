@@ -33,7 +33,9 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "pycountry", specifier = ">=26.2.16" },
     { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pyinstrument", marker = "extra == 'profiling'", specifier = ">=5.1.1" },
 ]
+provides-extras = ["profiling"]
 
 [package.metadata.requires-dev]
 dev = [
