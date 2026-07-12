@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from core import Metadata, Money, PositionSide, Tick
@@ -29,6 +29,35 @@ class SnowballCounterService:
     entry_service: SnowballEntryService
     grid_selector: SnowballGridSelector
     event_factory: SnowballEventFactory
+    distance_rule: CounterDistanceRule = field(init=False)
+    counter_opening: CounterSlotOpening = field(init=False)
+    next_layer_opening: NextLayerOpening = field(init=False)
+
+    def __post_init__(self) -> None:
+        distance_rule = CounterDistanceRule(pricing=self.pricing)
+        object.__setattr__(self, "distance_rule", distance_rule)
+        object.__setattr__(
+            self,
+            "counter_opening",
+            CounterSlotOpening(
+                calculator=self.calculator,
+                pricing=self.pricing,
+                entry_service=self.entry_service,
+                grid_selector=self.grid_selector,
+                event_factory=self.event_factory,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "next_layer_opening",
+            NextLayerOpening(
+                config=self.config,
+                calculator=self.calculator,
+                pricing=self.pricing,
+                entry_service=self.entry_service,
+                event_factory=self.event_factory,
+            ),
+        )
 
     def process_counter_adds(
         self,
@@ -37,12 +66,12 @@ class SnowballCounterService:
         tick: Tick,
     ) -> list[SnowballEvent]:
         """Open at most one counter or next-layer entry for this cycle on the tick."""
-        event = self._try_add_one_counter_or_layer(cycle=cycle, tick=tick)
+        event = self.next_counter_or_layer_event(cycle=cycle, tick=tick)
         if event is None:
             return []
         return [event]
 
-    def _try_add_one_counter_or_layer(
+    def next_counter_or_layer_event(
         self,
         *,
         cycle: Cycle,
@@ -52,7 +81,7 @@ class SnowballCounterService:
         if head is None:
             return None
         current_entry_price = self.pricing.entry_side_price(cycle.direction, tick)
-        if not self._is_losing_reference(
+        if not self.distance_rule.is_losing_reference(
             direction=cycle.direction,
             reference=head,
             current_entry_price=current_entry_price,
@@ -65,7 +94,7 @@ class SnowballCounterService:
             max_refillable_retracement=self.config.grid.max_refillable_counter_retracement,
         )
         if slot is not None:
-            return self._try_open_counter(
+            return self.counter_opening.try_open(
                 cycle=cycle,
                 tick=tick,
                 layer=layer,
@@ -74,13 +103,59 @@ class SnowballCounterService:
             )
         if cycle.grid.layer_count >= self.config.grid.max_layers:
             return None
-        return self._try_open_next_layer(
+        return self.next_layer_opening.try_open(
             cycle=cycle,
             tick=tick,
             current_entry_price=current_entry_price,
         )
 
-    def _try_open_counter(
+
+@dataclass(frozen=True, slots=True)
+class CounterDistanceRule:
+    """Evaluate counter-entry distance and direction rules."""
+
+    pricing: SnowballMarketPricing
+
+    def is_losing_reference(
+        self,
+        *,
+        direction: PositionSide,
+        reference: FilledEntry,
+        current_entry_price: Money,
+    ) -> bool:
+        """Return whether current price is adverse to the reference entry."""
+        if direction == PositionSide.LONG:
+            return current_entry_price < reference.filled_entry_price
+        return current_entry_price > reference.filled_entry_price
+
+    def adverse_pips(
+        self,
+        *,
+        direction: PositionSide,
+        reference_price: Money,
+        current_entry_price: Money,
+        pip_size: Decimal,
+    ) -> Decimal:
+        """Return adverse distance in pips."""
+        return self.pricing.adverse_pips(
+            direction=direction,
+            reference_price=reference_price,
+            current_entry_price=current_entry_price,
+            pip_size=pip_size,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CounterSlotOpening:
+    """Open a counter entry inside the current layer."""
+
+    calculator: SnowballCalculator
+    pricing: SnowballMarketPricing
+    entry_service: SnowballEntryService
+    grid_selector: SnowballGridSelector
+    event_factory: SnowballEventFactory
+
+    def try_open(
         self,
         *,
         cycle: Cycle,
@@ -125,7 +200,37 @@ class SnowballCounterService:
             ),
         )
 
-    def _try_open_next_layer(
+
+@dataclass(frozen=True, slots=True)
+class NextLayerEntryPrice:
+    """Project the planned entry price for the first slot of a new layer."""
+
+    def project(
+        self,
+        *,
+        direction: PositionSide,
+        reference: Money,
+        interval_pips: Decimal,
+        pip_size: Decimal,
+    ) -> Money:
+        interval_amount = interval_pips * pip_size
+        if direction == PositionSide.LONG:
+            return Money.of(reference.amount - interval_amount, reference.currency)
+        return Money.of(reference.amount + interval_amount, reference.currency)
+
+
+@dataclass(frozen=True, slots=True)
+class NextLayerOpening:
+    """Open the first counter slot of the next layer."""
+
+    config: SnowballConfig
+    calculator: SnowballCalculator
+    pricing: SnowballMarketPricing
+    entry_service: SnowballEntryService
+    event_factory: SnowballEventFactory
+    entry_price: NextLayerEntryPrice = field(default_factory=NextLayerEntryPrice)
+
+    def try_open(
         self,
         *,
         cycle: Cycle,
@@ -154,7 +259,7 @@ class SnowballCounterService:
         if adverse < interval:
             return None
 
-        planned_entry_price = self._next_layer_initial_entry_price(
+        planned_entry_price = self.entry_price.project(
             direction=cycle.direction,
             reference=reference,
             interval_pips=interval,
@@ -186,27 +291,3 @@ class SnowballCounterService:
                 actual_interval_pips=str(adverse),
             ),
         )
-
-    def _is_losing_reference(
-        self,
-        *,
-        direction: PositionSide,
-        reference: FilledEntry,
-        current_entry_price: Money,
-    ) -> bool:
-        if direction == PositionSide.LONG:
-            return current_entry_price < reference.filled_entry_price
-        return current_entry_price > reference.filled_entry_price
-
-    def _next_layer_initial_entry_price(
-        self,
-        *,
-        direction: PositionSide,
-        reference: Money,
-        interval_pips: Decimal,
-        pip_size: Decimal,
-    ) -> Money:
-        interval_amount = interval_pips * pip_size
-        if direction == PositionSide.LONG:
-            return Money.of(reference.amount - interval_amount, reference.currency)
-        return Money.of(reference.amount + interval_amount, reference.currency)
