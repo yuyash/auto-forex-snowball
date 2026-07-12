@@ -237,7 +237,7 @@ class NextLayerOpening:
         tick: Tick,
         current_entry_price: Money,
     ) -> SnowballOpenEvent | None:
-        tail = cycle.grid.tail_present_slot()
+        tail = cycle.grid.query.tail_present_slot()
         if tail is None:
             return None
         tail_layer, tail_slot = tail

@@ -105,6 +105,7 @@ class SnowballProtectionService:
                 state=state,
                 tick=tick,
                 config=self.config,
+                account_balance=current_account.balance,
             )
 
         return events

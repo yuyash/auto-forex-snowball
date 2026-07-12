@@ -37,7 +37,7 @@ class SnowballRebuildService:
         if not self.config.stop_loss.enabled or not self.config.rebuild.enabled:
             return []
         events: list[SnowballEvent] = []
-        for layer, slot in cycle.grid.iter_filled_stop_loss_slots():
+        for layer, slot in cycle.grid.query.iter_filled_stop_loss_slots():
             stop_loss_entry = slot.filled_stop_loss_entry
             if stop_loss_entry is None:
                 continue

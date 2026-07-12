@@ -385,6 +385,11 @@ class Layer:
         """Return slot numbers in ascending R order."""
         return tuple(self._slots)
 
+    @property
+    def query(self) -> LayerQuery:
+        """Return read-only queries for this layer."""
+        return self._query
+
     def slot(self, slot_number: int) -> Slot:
         """Return one retracement slot."""
         return self._slots[slot_number]
@@ -442,42 +447,6 @@ class Layer:
     def r0(self) -> Slot:
         """Return the layer's R0 slot."""
         return self.slot(0)
-
-    def live_entries(self) -> list[FilledEntry]:
-        """Return broker-live entries in ascending R order."""
-        return self._query.live_entries()
-
-    def has_live_entries(self) -> bool:
-        """Return True when any slot has a broker-live entry."""
-        return self._query.has_live_entries()
-
-    def live_entry_count(self) -> int:
-        """Return the number of broker-live entries."""
-        return self._query.live_entry_count()
-
-    def counter_entries(self) -> list[FilledEntry]:
-        """Return broker-live R1+ entries in ascending R order."""
-        return self._query.counter_entries()
-
-    def present_slots(self) -> list[Slot]:
-        """Return slots with any live, closed, or sealed entry."""
-        return self._query.present_slots()
-
-    def highest_present_slot(self) -> Slot | None:
-        """Return the highest-R slot with any entry."""
-        return self._query.highest_present_slot()
-
-    def highest_present_slot_number(self) -> int | None:
-        """Return the highest R number with any entry."""
-        return self._query.highest_present_slot_number()
-
-    def highest_live_slot(self) -> Slot | None:
-        """Return the highest-R slot with a directly closeable live entry."""
-        return self._query.highest_live_slot()
-
-    def is_empty(self) -> bool:
-        """Return True when the layer has no slot entries."""
-        return self._query.is_empty()
 
 
 @dataclass(slots=True)
@@ -553,6 +522,11 @@ class Grid:
         return len(self._layers)
 
     @property
+    def query(self) -> GridQuery:
+        """Return read-only queries for this grid."""
+        return self._query
+
+    @property
     def first_layer(self) -> Layer:
         """Return L1."""
         return self._layers[1]
@@ -589,92 +563,12 @@ class Grid:
             slot_number=layer.slot_number(slot),
         ).role
 
-    def all_live_entries(self) -> list[FilledEntry]:
-        """Return all live entries in grid order."""
-        return self._query.all_live_entries()
-
-    def has_live_entries(self) -> bool:
-        """Return True when any layer has broker-live entries."""
-        return self._query.has_live_entries()
-
-    def all_counter_entries(self) -> list[FilledEntry]:
-        """Return live counter entries in grid order."""
-        return self._query.all_counter_entries()
-
-    def all_present_slots(self) -> list[tuple[Layer, Slot]]:
-        """Return slots with any entry in grid order."""
-        return self._query.all_present_slots()
-
-    def iter_present_slots(self) -> Iterator[tuple[Layer, Slot]]:
-        """Iterate slots with any entry in grid order."""
-        yield from self._query.iter_present_slots()
-
-    def filled_stop_loss_slots(self) -> list[tuple[Layer, Slot]]:
-        """Return slots holding filled stop-loss entries waiting for rebuild."""
-        return self._query.filled_stop_loss_slots()
-
-    def iter_filled_stop_loss_slots(self) -> Iterator[tuple[Layer, Slot]]:
-        """Iterate slots holding filled stop-loss entries waiting for rebuild."""
-        yield from self._query.iter_filled_stop_loss_slots()
-
-    def requested_stop_loss_slots(self) -> list[tuple[Layer, Slot]]:
-        """Return slots with stop-loss closes waiting for fill confirmation."""
-        return self._query.requested_stop_loss_slots()
-
-    def iter_requested_stop_loss_slots(self) -> Iterator[tuple[Layer, Slot]]:
-        """Iterate slots with stop-loss closes waiting for fill confirmation."""
-        yield from self._query.iter_requested_stop_loss_slots()
-
-    def requested_close_slots(self) -> list[tuple[Layer, Slot]]:
-        """Return slots with non-stop-loss closes waiting for fill confirmation."""
-        return self._query.requested_close_slots()
-
-    def iter_requested_close_slots(self) -> Iterator[tuple[Layer, Slot]]:
-        """Iterate slots with non-stop-loss closes waiting for fill confirmation."""
-        yield from self._query.iter_requested_close_slots()
-
-    def requested_entry_slots(self) -> list[tuple[Layer, Slot]]:
-        """Return slots with entries waiting for fill confirmation."""
-        return self._query.requested_entry_slots()
-
-    def iter_requested_entry_slots(self) -> Iterator[tuple[Layer, Slot]]:
-        """Iterate slots with entries waiting for fill confirmation."""
-        yield from self._query.iter_requested_entry_slots()
-
-    def head_entry(self) -> FilledEntry | None:
-        """Return the lowest L/R live entry."""
-        return self._query.head_entry()
-
-    def tail_present_slot(self) -> tuple[Layer, Slot] | None:
-        """Return the highest L/R slot with any entry."""
-        return self._query.tail_present_slot()
-
-    def has_filled_stop_loss_entries(self) -> bool:
-        """Return True when any slot holds a filled stop-loss entry."""
-        return self._query.has_filled_stop_loss_entries()
-
-    def has_requested_stop_losses(self) -> bool:
-        """Return True when any stop-loss close is waiting for fill confirmation."""
-        return self._query.has_requested_stop_losses()
-
-    def has_requested_closes(self) -> bool:
-        """Return True when any non-stop-loss close is waiting for fill confirmation."""
-        return self._query.has_requested_closes()
-
-    def has_requested_entries(self) -> bool:
-        """Return True when any entry is waiting for fill confirmation."""
-        return self._query.has_requested_entries()
-
-    def is_empty(self) -> bool:
-        """Return True when there are no live entries."""
-        return self._query.is_empty()
-
     def remove_empty_top_layers(self) -> None:
         """Remove empty non-L1 layers from the top of the grid."""
         while len(self._layers) > 1:
             top_layer_number = max(self._layers)
             top_layer = self._layers[top_layer_number]
-            if not top_layer.is_empty():
+            if not top_layer.query.is_empty():
                 return
             del self._layers[top_layer_number]
             self._layer_index = ObjectNumberIndex.from_mapping(

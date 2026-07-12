@@ -91,18 +91,18 @@ class GridQuery:
         """Return all live entries in grid order."""
         entries: list[FilledEntry] = []
         for layer in self.grid.iter_layers():
-            entries.extend(layer.live_entries())
+            entries.extend(layer.query.live_entries())
         return entries
 
     def has_live_entries(self) -> bool:
         """Return True when any layer has broker-live entries."""
-        return any(layer.has_live_entries() for layer in self.grid.iter_layers())
+        return any(layer.query.has_live_entries() for layer in self.grid.iter_layers())
 
     def all_counter_entries(self) -> list[FilledEntry]:
         """Return live counter entries in grid order."""
         entries: list[FilledEntry] = []
         for layer in self.grid.iter_layers():
-            entries.extend(layer.counter_entries())
+            entries.extend(layer.query.counter_entries())
         return entries
 
     def all_present_slots(self) -> list[tuple[Layer, Slot]]:

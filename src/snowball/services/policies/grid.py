@@ -109,7 +109,7 @@ class SnowballGridPolicy:
         return max(take_profit_price, bound)
 
     def _present_slots(self, cycle: Cycle) -> Iterator[PresentSlot]:
-        for layer, slot in cycle.grid.iter_present_slots():
+        for layer, slot in cycle.grid.query.iter_present_slots():
             entry_price = slot.reference_entry_price()
             take_profit_price = slot.reference_take_profit_price()
             if entry_price is None or take_profit_price is None:

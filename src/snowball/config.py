@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any, Self
 
-from core import Currency, MarginRate, Money, Percent, Pips, StrategyParameters, Units
+from core import MarginRate, Money, Percent, Pips, StrategyParameters, Units
 
 from snowball.config_parsing import SnowballConfigParser
 from snowball.config_serialization import SnowballConfigSerializer
 from snowball.enums import (
     CounterTakeProfitMode,
     IntervalMode,
+    PositionSizingMode,
     RebuildEntryPriceMode,
     RebuildStopLossMode,
     RebuildTakeProfitMode,
@@ -70,12 +71,67 @@ class PipProgressionConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BalanceBasedPositionSizingConfig:
+    """Resolve base units proportionally to the Core account balance."""
+
+    reference_balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
+    reference_units: Units = field(default_factory=lambda: Units("1000"))
+    round_step_units: Units = field(default_factory=lambda: Units("1"))
+    min_units: Units = field(default_factory=lambda: Units("1"))
+
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, Any]) -> BalanceBasedPositionSizingConfig:
+        """Build balance-based sizing config from nested values."""
+        config = cls()
+        if not values:
+            return config
+        return replace(
+            config,
+            **SnowballConfigParser.changes(
+                values,
+                reference_balance=SnowballConfigParser.money_value,
+                reference_units=Units.of,
+                round_step_units=Units.of,
+                min_units=Units.of,
+            ),
+        )
+
+    def validate(self) -> None:
+        """Validate balance-based sizing values."""
+        self.reference_balance.require_positive()
+        SnowballConfigParser.require_positive(
+            self.reference_units,
+            "sizing.balance_based.reference_units",
+        )
+        SnowballConfigParser.require_positive(
+            self.round_step_units,
+            "sizing.balance_based.round_step_units",
+        )
+        SnowballConfigParser.require_positive(
+            self.min_units,
+            "sizing.balance_based.min_units",
+        )
+
+    def base_units_for(self, account_balance: Money) -> Units:
+        """Return floor-rounded base units for a Core account balance."""
+        account_balance.require_currency(self.reference_balance.currency).require_positive()
+        raw_units = self.reference_units * account_balance.amount / self.reference_balance.amount
+        rounded_units = (
+            (raw_units / self.round_step_units).to_integral_value(rounding=ROUND_FLOOR)
+            * self.round_step_units
+        )
+        return Units.of(max(rounded_units, self.min_units))
+
+
+@dataclass(frozen=True, slots=True)
 class PositionSizingConfig:
     """Unit sizing for Snowball entries."""
 
+    mode: PositionSizingMode = PositionSizingMode.FIXED
     base_units: Units = field(default_factory=lambda: Units("1000"))
     initial_entry_units_multiplier: Decimal = Decimal("1")
     additional_layer_base_units_multiplier: Decimal = Decimal("1")
+    balance_based: BalanceBasedPositionSizingConfig = BalanceBasedPositionSizingConfig()
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> PositionSizingConfig:
@@ -87,9 +143,11 @@ class PositionSizingConfig:
             config,
             **SnowballConfigParser.changes(
                 values,
+                mode=lambda value: SnowballConfigParser.enum_value(PositionSizingMode, value),
                 base_units=Units.of,
                 initial_entry_units_multiplier=SnowballConfigParser.decimal_value,
                 additional_layer_base_units_multiplier=SnowballConfigParser.decimal_value,
+                balance_based=BalanceBasedPositionSizingConfig.from_mapping,
             ),
         )
 
@@ -103,6 +161,16 @@ class PositionSizingConfig:
         SnowballConfigParser.require_positive(
             self.additional_layer_base_units_multiplier,
             "sizing.additional_layer_base_units_multiplier",
+        )
+        self.balance_based.validate()
+
+    def with_account_balance(self, account_balance: Money) -> PositionSizingConfig:
+        """Return sizing with ``base_units`` resolved from the Core account balance."""
+        if self.mode == PositionSizingMode.FIXED:
+            return self
+        return replace(
+            self,
+            base_units=self.balance_based.base_units_for(account_balance),
         )
 
     def layer_base_units(self, layer_number: int) -> Units:
@@ -548,8 +616,6 @@ class ProtectionConfig:
 class AccountValuationConfig:
     """Account and margin inputs used for strategy-side protection estimates."""
 
-    currency: Currency = field(default_factory=lambda: Currency.of("USD"))
-    balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
     margin_rate: MarginRate = field(default_factory=lambda: MarginRate("0.04"))
     quote_to_account_rate: Decimal = Decimal("1")
 
@@ -559,16 +625,15 @@ class AccountValuationConfig:
         config = cls()
         if not values:
             return config
-        currency = Currency.of(values["currency"]) if "currency" in values else config.currency
-        balance = (
-            Money.coerce_positive(values["balance"], currency)
-            if "balance" in values
-            else Money.of(config.balance.amount, currency)
-        )
+        unsupported = {"balance", "currency"} & set(values)
+        if unsupported:
+            fields = ", ".join(f"account.{field}" for field in sorted(unsupported))
+            raise ValueError(
+                f"{fields} must be configured through Core task account balance, "
+                "not Snowball parameters"
+            )
         return replace(
             config,
-            currency=currency,
-            balance=balance,
             **SnowballConfigParser.changes(
                 values,
                 margin_rate=MarginRate.of,
@@ -578,7 +643,6 @@ class AccountValuationConfig:
 
     def validate(self) -> None:
         """Validate account valuation inputs."""
-        self.balance.require_currency(self.currency).require_positive()
         SnowballConfigParser.require_positive(self.margin_rate, "account.margin_rate")
         SnowballConfigParser.require_positive(
             self.quote_to_account_rate, "account.quote_to_account_rate"
@@ -644,6 +708,14 @@ class SnowballConfig:
         if self.stop_loss.enabled and self.protection.shrink_enabled:
             raise ValueError("stop_loss.enabled and protection.shrink_enabled cannot both be true")
         return self
+
+    def with_account_balance(self, account_balance: Money) -> SnowballConfig:
+        """Return a config whose sizing is resolved from the Core account balance."""
+        account_balance.require_positive()
+        return replace(
+            self,
+            sizing=self.sizing.with_account_balance(account_balance),
+        ).validate()
 
     def to_dict(self) -> dict[str, Any]:
         """Return nested normalized values suitable for StrategyParameters."""

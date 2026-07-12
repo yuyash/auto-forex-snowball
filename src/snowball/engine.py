@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core import Tick
+from core import Money, Tick
 
 from snowball.composition import SnowballServiceContainer
 from snowball.config import SnowballConfig
@@ -26,9 +26,11 @@ class SnowballEngine:
     """Coordinate Snowball state transitions for market ticks."""
 
     config: SnowballConfig
+    account_balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
     services: SnowballServiceContainer = field(init=False)
 
     def __post_init__(self) -> None:
+        self.config = self.config.with_account_balance(self.account_balance)
         self.services = SnowballServiceContainer(self.config)
 
     def process_tick(
@@ -40,7 +42,12 @@ class SnowballEngine:
         """Process a tick and return emitted Snowball events."""
         state.prune_completed_cycles()
         account = (
-            self.services.accounting.evaluate(state=state, tick=tick, config=self.config)
+            self.services.accounting.evaluate(
+                state=state,
+                tick=tick,
+                config=self.config,
+                account_balance=self.account_balance,
+            )
             if self.services.requires_accounting
             else None
         )

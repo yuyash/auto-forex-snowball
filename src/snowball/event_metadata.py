@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from core import Metadata, PositionSide, TradeSide
 
+from snowball.enums import CloseReason
 from snowball.events import (
     SnowballCloseEvent,
     SnowballEvent,
@@ -12,6 +13,14 @@ from snowball.events import (
     SnowballStopEvent,
 )
 from snowball.models.entries import FilledEntry, RequestedEntry
+
+TAKE_PROFIT_CLOSE_REASONS = frozenset(
+    {
+        CloseReason.TAKE_PROFIT,
+        CloseReason.COUNTER_TAKE_PROFIT,
+        CloseReason.LAYER_INITIAL_TAKE_PROFIT,
+    }
+)
 
 
 class SnowballEventName:
@@ -84,9 +93,11 @@ class SnowballEventMetadataMapper:
         metadata = metadata.merge(self.requested_entry_metadata(event.entry))
         metadata = metadata.with_value("price", str(event.entry.planned_entry_price))
         if self.metadata_bool(metadata.get("is_rebuild", False)):
-            metadata = metadata.with_value(
-                "planned_rebuild_price",
-                str(event.entry.planned_entry_price),
+            metadata = metadata.merge(
+                Metadata.of(
+                    planned_rebuild_price=str(event.entry.planned_entry_price),
+                    filled_price_metadata_keys=("filled_entry_price", "filled_rebuild_price"),
+                )
             )
         return metadata
 
@@ -96,6 +107,7 @@ class SnowballEventMetadataMapper:
         return metadata.merge(
             Metadata.of(
                 close_reason=event.close_reason.value,
+                filled_price_metadata_key=SnowballCloseFillPriceKey.of(event.close_reason),
                 price=str(event.price),
             )
         )
@@ -147,3 +159,16 @@ class SnowballRuleMapper:
         if metadata.get("is_rebuild") is True:
             return "snowball.open.rebuild"
         return "snowball.open"
+
+
+class SnowballCloseFillPriceKey:
+    """Map Snowball close reasons to Core fill-price metadata keys."""
+
+    @classmethod
+    def of(cls, close_reason: CloseReason) -> str:
+        """Return the StrategyExecutionResponse metadata key for a close fill."""
+        if close_reason in TAKE_PROFIT_CLOSE_REASONS:
+            return "filled_take_profit_price"
+        if close_reason == CloseReason.STOP_LOSS:
+            return "filled_stop_loss_price"
+        return ""

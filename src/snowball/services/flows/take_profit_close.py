@@ -125,7 +125,7 @@ class SnowballTakeProfitCloseService:
     ) -> tuple[Layer, Slot] | None:
         head = cycle.head()
         for layer in cycle.grid.reversed_layers():
-            live_count = layer.live_entry_count()
+            live_count = layer.query.live_entry_count()
             for slot in layer.reversed_slots():
                 entry = slot.filled_entry
                 if entry is None or entry is head:

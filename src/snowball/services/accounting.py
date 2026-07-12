@@ -33,9 +33,10 @@ class SnowballAccounting:
         state: SnowballState,
         tick: Tick,
         config: SnowballConfig,
+        account_balance: Money,
     ) -> AccountSnapshot:
         """Return account NAV and margin ratio for one tick."""
-        balance = config.account.balance
+        balance = account_balance
         unrealized = Money.of("0", balance.currency)
         for cycle in state.iter_cycles():
             for entry in cycle.live_entries():

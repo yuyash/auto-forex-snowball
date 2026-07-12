@@ -79,7 +79,7 @@ class SnowballTakeProfitPlanner:
             entry_price=new_price,
             pip_size=pip_size,
         )
-        highest = previous_layer.highest_present_slot()
+        highest = previous_layer.query.highest_present_slot()
         if highest is None:
             return planned_take_profit_price
         previous_tp = highest.reference_take_profit_price()

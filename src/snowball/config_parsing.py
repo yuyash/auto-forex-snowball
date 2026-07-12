@@ -7,6 +7,8 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from core import Money
+
 
 class SnowballConfigParser:
     """Parse and validate raw Snowball strategy configuration values."""
@@ -32,6 +34,15 @@ class SnowballConfigParser:
         if isinstance(value, bool | int | float):
             raise TypeError("decimal config values must be provided as Decimal or str")
         return Decimal(str(value))
+
+    @staticmethod
+    def money_value(value: Any) -> Money:
+        """Parse a fully currency-tagged money config value."""
+        if isinstance(value, Money):
+            return value.require_positive()
+        if not isinstance(value, Mapping):
+            raise TypeError("money config values must be provided as Money or object")
+        return Money.model_validate(value).require_positive()
 
     @staticmethod
     def int_value(value: Any) -> int:

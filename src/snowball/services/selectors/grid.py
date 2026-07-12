@@ -20,10 +20,10 @@ class SnowballGridSelector:
         head = cycle.head()
         if head is not None:
             return head
-        for _layer, slot in cycle.grid.iter_requested_stop_loss_slots():
+        for _layer, slot in cycle.grid.query.iter_requested_stop_loss_slots():
             if slot.requested_stop_loss_entry is not None:
                 return slot.requested_stop_loss_entry.original_entry
-        for _layer, slot in cycle.grid.iter_filled_stop_loss_slots():
+        for _layer, slot in cycle.grid.query.iter_filled_stop_loss_slots():
             if slot.filled_stop_loss_entry is not None:
                 return slot.filled_stop_loss_entry.original_entry
         return None
@@ -35,7 +35,7 @@ class SnowballGridSelector:
         max_refillable_retracement: int,
     ) -> Slot | None:
         """Return the next R1+ slot that can receive a counter entry."""
-        highest_present_slot_number = layer.highest_present_slot_number()
+        highest_present_slot_number = layer.query.highest_present_slot_number()
         for retracement_count, slot in layer.iter_slot_items():
             if retracement_count <= 0:
                 continue

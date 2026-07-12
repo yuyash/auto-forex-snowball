@@ -26,25 +26,23 @@ class SnowballRuntime:
     """Own Snowball execution dependencies for one strategy instance."""
 
     config: SnowballConfig
-    engine: SnowballEngine = field(init=False)
+    engine: SnowballEngine | None = field(default=None, init=False)
     event_mapper: SnowballEventMapper = field(default_factory=SnowballEventMapper)
     execution_reports: SnowballExecutionReportApplier = field(
         default_factory=SnowballExecutionReportApplier
     )
     _state: SnowballState | None = field(default=None, init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        self.engine = SnowballEngine(self.config)
-
     def start(self, context: StrategyContext) -> StrategyResult:
         """Initialize or restore strategy state at task start."""
+        self._engine(context)
         self._state = self._state_from_context(context)
         return StrategyResult(state=self.strategy_state())
 
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         """Process a tick and map Snowball events to Core strategy events."""
         state = self._runtime_state(context)
-        result = self.engine.process_tick(tick=tick, state=state)
+        result = self._engine(context).process_tick(tick=tick, state=state)
         events = tuple(
             self.event_mapper.to_strategy_event(event=event, tick=tick, context=context)
             for event in result.events
@@ -82,3 +80,16 @@ class SnowballRuntime:
 
     def _state_from_context(self, context: StrategyContext) -> SnowballState:
         return SnowballStateSerializer.from_strategy_state(context.state)
+
+    def _engine(self, context: StrategyContext) -> SnowballEngine:
+        if self.engine is not None and self.engine.account_balance == context.account_balance:
+            return self.engine
+        if self.engine is not None and self._state is not None and self._state.has_cycles():
+            msg = "strategy account balance cannot change after Snowball state is active"
+            raise ValueError(msg)
+        self.config = self.config.with_account_balance(context.account_balance)
+        self.engine = SnowballEngine(
+            config=self.config,
+            account_balance=context.account_balance,
+        )
+        return self.engine

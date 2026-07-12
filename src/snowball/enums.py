@@ -13,6 +13,13 @@ class EntryRole(StrEnum):
     LAYER_INITIAL = "layer_initial"
 
 
+class PositionSizingMode(StrEnum):
+    """Policy for resolving Snowball base units."""
+
+    FIXED = "fixed"
+    BALANCE_BASED = "balance_based"
+
+
 class CycleStatus(StrEnum):
     """Lifecycle state of one directional Snowball cycle."""
 

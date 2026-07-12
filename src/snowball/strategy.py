@@ -70,7 +70,7 @@ class SnowballStrategy(Strategy):
     @property
     def config(self) -> SnowballConfig:
         """Return normalized Snowball config."""
-        return self._config
+        return self._runtime.config
 
     @property
     def state(self) -> SnowballState:

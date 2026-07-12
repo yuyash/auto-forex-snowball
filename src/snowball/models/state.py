@@ -89,15 +89,15 @@ class Cycle:
 
     def live_entries(self) -> list[FilledEntry]:
         """Return live entries in grid order."""
-        return self.grid.all_live_entries()
+        return self.grid.query.all_live_entries()
 
     def counter_entries(self) -> list[FilledEntry]:
         """Return counter entries in grid order."""
-        return self.grid.all_counter_entries()
+        return self.grid.query.all_counter_entries()
 
     def head(self) -> FilledEntry | None:
         """Return the live cycle head."""
-        return self.grid.head_entry()
+        return self.grid.query.head_entry()
 
     def next_entry_id(self, *, layer: Layer, slot: Slot) -> EntryId:
         """Return the next entry identifier for a slot in this cycle."""
@@ -110,11 +110,11 @@ class Cycle:
         self.grid.remove_empty_top_layers()
         if validate:
             self.grid.validate_for_cycle(self.cycle_id)
-        has_live = self.grid.has_live_entries()
-        has_requested_entry = self.grid.has_requested_entries()
-        has_requested_close = self.grid.has_requested_closes()
-        has_requested_stop_loss = self.grid.has_requested_stop_losses()
-        has_filled_stop_loss = self.grid.has_filled_stop_loss_entries()
+        has_live = self.grid.query.has_live_entries()
+        has_requested_entry = self.grid.query.has_requested_entries()
+        has_requested_close = self.grid.query.has_requested_closes()
+        has_requested_stop_loss = self.grid.query.has_requested_stop_losses()
+        has_filled_stop_loss = self.grid.query.has_filled_stop_loss_entries()
         if has_live or has_requested_entry or has_requested_close or has_requested_stop_loss:
             self._status = CycleStatus.ACTIVE
         elif has_filled_stop_loss:
