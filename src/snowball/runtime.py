@@ -26,12 +26,16 @@ class SnowballRuntime:
     """Own Snowball execution dependencies for one strategy instance."""
 
     config: SnowballConfig
+    base_config: SnowballConfig = field(init=False)
     engine: SnowballEngine | None = field(default=None, init=False)
     event_mapper: SnowballEventMapper = field(default_factory=SnowballEventMapper)
     execution_reports: SnowballExecutionReportApplier = field(
         default_factory=SnowballExecutionReportApplier
     )
     _state: SnowballState | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.base_config = self.config
 
     def start(self, context: StrategyContext) -> StrategyResult:
         """Initialize or restore strategy state at task start."""
@@ -84,12 +88,9 @@ class SnowballRuntime:
     def _engine(self, context: StrategyContext) -> SnowballEngine:
         if self.engine is not None and self.engine.account_balance == context.account_balance:
             return self.engine
-        if self.engine is not None and self._state is not None and self._state.has_cycles():
-            msg = "strategy account balance cannot change after Snowball state is active"
-            raise ValueError(msg)
-        self.config = self.config.with_account_balance(context.account_balance)
         self.engine = SnowballEngine(
-            config=self.config,
+            config=self.base_config,
             account_balance=context.account_balance,
         )
+        self.config = self.engine.config
         return self.engine

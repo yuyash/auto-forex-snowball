@@ -72,10 +72,8 @@ class PipProgressionConfig:
 
 @dataclass(frozen=True, slots=True)
 class BalanceBasedPositionSizingConfig:
-    """Resolve base units proportionally to the Core account balance."""
+    """Rounding policy for balance-based base-unit sizing."""
 
-    reference_balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
-    reference_units: Units = field(default_factory=lambda: Units("1000"))
     round_step_units: Units = field(default_factory=lambda: Units("1"))
     min_units: Units = field(default_factory=lambda: Units("1"))
 
@@ -89,8 +87,6 @@ class BalanceBasedPositionSizingConfig:
             config,
             **SnowballConfigParser.changes(
                 values,
-                reference_balance=SnowballConfigParser.money_value,
-                reference_units=Units.of,
                 round_step_units=Units.of,
                 min_units=Units.of,
             ),
@@ -98,11 +94,6 @@ class BalanceBasedPositionSizingConfig:
 
     def validate(self) -> None:
         """Validate balance-based sizing values."""
-        self.reference_balance.require_positive()
-        SnowballConfigParser.require_positive(
-            self.reference_units,
-            "sizing.balance_based.reference_units",
-        )
         SnowballConfigParser.require_positive(
             self.round_step_units,
             "sizing.balance_based.round_step_units",
@@ -112,12 +103,10 @@ class BalanceBasedPositionSizingConfig:
             "sizing.balance_based.min_units",
         )
 
-    def base_units_for(self, account_balance: Money) -> Units:
-        """Return floor-rounded base units for a Core account balance."""
-        account_balance.require_currency(self.reference_balance.currency).require_positive()
-        raw_units = self.reference_units * account_balance.amount / self.reference_balance.amount
+    def rounded(self, units: Units) -> Units:
+        """Return floor-rounded units respecting the configured minimum."""
         rounded_units = (
-            (raw_units / self.round_step_units).to_integral_value(rounding=ROUND_FLOOR)
+            (units / self.round_step_units).to_integral_value(rounding=ROUND_FLOOR)
             * self.round_step_units
         )
         return Units.of(max(rounded_units, self.min_units))
@@ -164,13 +153,20 @@ class PositionSizingConfig:
         )
         self.balance_based.validate()
 
-    def with_account_balance(self, account_balance: Money) -> PositionSizingConfig:
+    def with_account_balance(
+        self,
+        *,
+        account_balance: Money,
+        initial_balance: Money,
+    ) -> PositionSizingConfig:
         """Return sizing with ``base_units`` resolved from the Core account balance."""
         if self.mode == PositionSizingMode.FIXED:
             return self
+        account_balance.require_currency(initial_balance.currency).require_positive()
+        raw_units = self.base_units * account_balance.amount / initial_balance.amount
         return replace(
             self,
-            base_units=self.balance_based.base_units_for(account_balance),
+            base_units=self.balance_based.rounded(Units.of(raw_units)),
         )
 
     def layer_base_units(self, layer_number: int) -> Units:
@@ -616,6 +612,7 @@ class ProtectionConfig:
 class AccountValuationConfig:
     """Account and margin inputs used for strategy-side protection estimates."""
 
+    initial_balance: Money = field(default_factory=lambda: Money.of("10000", "USD"))
     margin_rate: MarginRate = field(default_factory=lambda: MarginRate("0.04"))
     quote_to_account_rate: Decimal = Decimal("1")
 
@@ -629,13 +626,13 @@ class AccountValuationConfig:
         if unsupported:
             fields = ", ".join(f"account.{field}" for field in sorted(unsupported))
             raise ValueError(
-                f"{fields} must be configured through Core task account balance, "
-                "not Snowball parameters"
+                f"{fields} is ambiguous; use account.initial_balance with amount and currency"
             )
         return replace(
             config,
             **SnowballConfigParser.changes(
                 values,
+                initial_balance=SnowballConfigParser.money_value,
                 margin_rate=MarginRate.of,
                 quote_to_account_rate=SnowballConfigParser.decimal_value,
             ),
@@ -643,6 +640,7 @@ class AccountValuationConfig:
 
     def validate(self) -> None:
         """Validate account valuation inputs."""
+        self.initial_balance.require_positive()
         SnowballConfigParser.require_positive(self.margin_rate, "account.margin_rate")
         SnowballConfigParser.require_positive(
             self.quote_to_account_rate, "account.quote_to_account_rate"
@@ -714,7 +712,10 @@ class SnowballConfig:
         account_balance.require_positive()
         return replace(
             self,
-            sizing=self.sizing.with_account_balance(account_balance),
+            sizing=self.sizing.with_account_balance(
+                account_balance=account_balance,
+                initial_balance=self.account.initial_balance,
+            ),
         ).validate()
 
     def to_dict(self) -> dict[str, Any]:

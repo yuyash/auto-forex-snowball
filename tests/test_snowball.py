@@ -491,15 +491,17 @@ class TestSnowballStrategy:
     def test_balance_based_sizing_uses_core_context_account_balance(self) -> None:
         strategy = SnowballStrategy(
             parameters=StrategyParameters.of(
+                account={
+                    "initial_balance": {
+                        "amount": "1000000",
+                        "currency": "JPY",
+                    }
+                },
                 cycle={"hedging_enabled": False},
                 sizing={
                     "mode": "balance_based",
+                    "base_units": "1000",
                     "balance_based": {
-                        "reference_balance": {
-                            "amount": "1000000",
-                            "currency": "JPY",
-                        },
-                        "reference_units": "1000",
                         "round_step_units": "100",
                         "min_units": "100",
                     },
@@ -510,7 +512,45 @@ class TestSnowballStrategy:
             task_id=new_uuid(),
             task_type=TaskType.BACKTEST,
             instrument=USD_JPY,
-            account_balance=Money.of("3000000", "JPY"),
+            account_balance=Money.of("1000000", "JPY"),
+        )
+        strategy.on_start(context)
+        context = context.with_state(strategy.strategy_state()).with_account_balance(
+            Money.of("3000000", "JPY")
+        )
+
+        result = strategy.on_tick(
+            TickFactory.tick_at(0, bid="150.00", ask="150.02"),
+            context,
+        )
+
+        assert result.events[0].units == Units("3000")
+        assert strategy.config.sizing.base_units == Units("3000")
+
+    def test_balance_based_sizing_uses_original_base_units_when_balance_changes(self) -> None:
+        strategy = SnowballStrategy(
+            parameters=StrategyParameters.of(
+                account={
+                    "initial_balance": {
+                        "amount": "1000000",
+                        "currency": "JPY",
+                    }
+                },
+                sizing={
+                    "mode": "balance_based",
+                    "base_units": "1000",
+                },
+            )
+        )
+        context = StrategyContext(
+            task_id=new_uuid(),
+            task_type=TaskType.BACKTEST,
+            instrument=USD_JPY,
+            account_balance=Money.of("2000000", "JPY"),
+        )
+        strategy.on_start(context)
+        context = context.with_state(strategy.strategy_state()).with_account_balance(
+            Money.of("3000000", "JPY")
         )
 
         result = strategy.on_tick(
@@ -522,7 +562,7 @@ class TestSnowballStrategy:
         assert strategy.config.sizing.base_units == Units("3000")
 
     def test_account_balance_is_not_a_snowball_parameter(self) -> None:
-        with pytest.raises(ValueError, match="Core task account balance"):
+        with pytest.raises(ValueError, match=r"account\.initial_balance"):
             SnowballConfig.from_parameters(
                 StrategyParameters.of(
                     account={
@@ -533,6 +573,20 @@ class TestSnowballStrategy:
                     }
                 )
             )
+
+    def test_account_initial_balance_is_a_snowball_account_parameter(self) -> None:
+        config = SnowballConfig.from_parameters(
+            StrategyParameters.of(
+                account={
+                    "initial_balance": {
+                        "amount": "3000000",
+                        "currency": "JPY",
+                    }
+                }
+            )
+        )
+
+        assert config.account.initial_balance == Money.of("3000000", "JPY")
 
     def test_strategy_normalizes_nested_parameters(self) -> None:
         strategy = SnowballStrategy(
